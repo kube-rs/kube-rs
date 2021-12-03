@@ -82,7 +82,7 @@ where
 ///     }
 /// }
 /// ```
-pub trait Condition<K> {
+pub trait Condition<K: ?Sized> {
     fn matches_object(&self, obj: Option<&K>) -> bool;
 
     /// Returns a `Condition` that holds if `self` does not
@@ -143,7 +143,7 @@ pub trait Condition<K> {
     }
 }
 
-impl<K, F: Fn(Option<&K>) -> bool> Condition<K> for F {
+impl<K: ?Sized, F: Fn(Option<&K>) -> bool> Condition<K> for F {
     fn matches_object(&self, obj: Option<&K>) -> bool {
         (self)(obj)
     }
@@ -154,6 +154,7 @@ pub mod conditions {
     pub use super::Condition;
     use k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
     use kube_client::Resource;
+    use serde::Serialize;
 
     /// An await condition that returns `true` once the object has been deleted.
     ///
@@ -186,6 +187,74 @@ pub mod conditions {
                 }
             }
             false
+        }
+    }
+
+    /// An await condition that returns `true` if the object exists.
+    ///
+    /// NOTE: If waiting for an object to be deleted, do _not_ [invert](`Condition::not`) this [`Condition`].
+    /// Instead, use [`is_deleted`], which considers a deleted-then-recreated object to have been deleted.
+    #[must_use]
+    pub fn exists<K>() -> impl Condition<K> {
+        |obj: Option<&K>| obj.is_some()
+    }
+
+    /// A condition that returns true if an arbitrary condition matches a condition value
+    ///
+    /// # Value condition
+    ///
+    /// The value condition is passed `None` if the object does not exist or does not have the given condition (combine with
+    /// [`exists`] if you need to validate whether the object exists). Otherwise, the value should be one of `"True"`, `"False"`, or `"Unknown"`
+    /// (see <https://kubernetes.io/docs/reference/generated/kubernetes-api/v1.22/#condition-v1-meta> for more details).
+    ///
+    /// # Stability
+    ///
+    /// This is an experimental API that should be expected to change. It has a few particular problems:
+    ///
+    /// 1. It is completely untyped
+    /// 2. It makes fairly deep assumptions about the structure of the object and its status
+    /// 3. It doesn't have any way to signal errors gracefully
+    /// 4. It has some unfortunate lifetime problems that prevent bringing in a closure context
+    ///
+    /// # Usage
+    ///
+    /// ```rust
+    /// # use k8s_openapi::api::core::v1::{Pod, PodCondition, PodStatus};
+    /// # use kube_runtime::wait::{conditions::unstable_has_status_condition, Condition};
+    /// let pod = |ready: String| Pod {
+    ///     status: Some(PodStatus {
+    ///         conditions: Some(vec![PodCondition {
+    ///             type_: "Ready".to_string(),
+    ///             status: ready,
+    ///             ..PodCondition::default()
+    ///         }]),
+    ///         ..PodStatus::default()
+    ///     }),
+    ///     ..Pod::default()
+    /// };
+    /// let cond_status_ready: fn(Option<&str>) -> bool = |status| status == Some("True");
+    /// let cond_pod_ready = unstable_has_status_condition("Ready", cond_status_ready);
+    /// assert!(!cond_pod_ready.matches_object(Some(&pod("False".to_string()))));
+    /// assert!(cond_pod_ready.matches_object(Some(&pod("True".to_string()))));
+    /// ```
+    #[must_use]
+    pub fn unstable_has_status_condition<'a, K: Serialize + Resource, StatusCond: Condition<str> + 'a>(
+        condition_type: &'a str,
+        status_cond: StatusCond,
+    ) -> impl Condition<K> + 'a {
+        move |obj: Option<&K>| {
+            let serialized_obj = serde_json::to_value(obj).ok();
+            status_cond.matches_object(serialized_obj.as_ref().and_then(|obj| {
+                obj.get("status")?
+                    .get("conditions")?
+                    .as_array()?
+                    .iter()
+                    .find(|cond| {
+                        cond.get("type").and_then(serde_json::Value::as_str) == Some(condition_type)
+                    })?
+                    .get("status")?
+                    .as_str()
+            }))
         }
     }
 

@@ -273,15 +273,15 @@ impl PartialOrd<time::Duration> for Duration {
 impl schemars::JsonSchema for Duration {
     // see
     // https://github.com/kubernetes/apimachinery/blob/756e2227bf3a486098f504af1a0ffb736ad16f4c/pkg/apis/meta/v1/duration.go#L61
-    fn schema_name() -> String {
-        "Duration".to_owned()
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "Duration"
     }
 
     fn is_referenceable() -> bool {
         false
     }
 
-    fn json_schema(_: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
+    fn json_schema(_: &mut schemars::generate::SchemaGenerator) -> schemars::schema::Schema {
         schemars::schema::SchemaObject {
             instance_type: Some(schemars::schema::InstanceType::String.into()),
             // the format should *not* be "duration", because "duration" means

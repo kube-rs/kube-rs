@@ -29,7 +29,7 @@ serde = { workspace = true, features = ["derive"] }
 serde_yaml.workspace = true
 kube = { path = "../kube", version = "<1.0.0, >=0.61.0", features = ["derive", "client"] }
 k8s-openapi = { workspace = true, features = ["latest"] }
-schemars = { workspace = true, features = ["chrono"] }
+schemars = { workspace = true, features = ["chrono04"] }
 chrono.workspace = true
 trybuild.workspace = true
 assert-json-diff.workspace = true

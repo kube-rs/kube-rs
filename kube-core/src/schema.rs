@@ -3,7 +3,7 @@
 //! [`CustomResourceDefinition`]: `k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition`
 
 // Used in docs
-#[allow(unused_imports)] use schemars::gen::SchemaSettings;
+#[allow(unused_imports)] use schemars::generate::SchemaSettings;
 
 use schemars::{
     schema::{InstanceType, Metadata, ObjectValidation, Schema, SchemaObject, SingleOrVec},

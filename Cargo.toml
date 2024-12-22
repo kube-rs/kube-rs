@@ -23,8 +23,8 @@ authors = [
 repository = "https://github.com/kube-rs/kube"
 readme = "README.md"
 license = "Apache-2.0"
-edition = "2021"
-rust-version = "1.77.2"
+edition = "2024"
+rust-version = "1.85.0"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
@@ -71,7 +71,7 @@ quote = "1.0.10"
 rand = "0.8.3"
 rustls = { version = "0.23.16", default-features = false }
 rustls-pemfile = "2.0.0"
-schemars = "0.8.6"
+schemars = { version = "1.0.0-alpha.17" }
 secrecy = "0.10.2"
 serde = "1.0.130"
 serde_json = "1.0.68"

@@ -272,11 +272,12 @@ impl<K: Lookup> From<ObjectRef<K>> for ObjectReference {
             dyntype: dt,
             name,
             namespace,
-            extra: Extra {
-                resource_version,
-                uid,
-                ..
-            },
+            extra:
+                Extra {
+                    resource_version,
+                    uid,
+                    ..
+                },
         } = val;
         ObjectReference {
             api_version: Some(K::api_version(&dt).into_owned()),

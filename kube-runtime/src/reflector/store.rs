@@ -112,7 +112,7 @@ where
                 store.remove(&key);
                 if self.dispatcher.is_some() {
                     // Re-insert the entry with updated key, as insert on its own doesnt modify the key
-                    key.extra.remaining_lookups = self.dispatcher.as_ref().map(|d| d.subscribers());
+                    key.extra.remaining_lookups = self.dispatcher.as_ref().map(Dispatcher::subscribers);
                     store.insert(key, Arc::new(obj.clone()));
                 }
             }

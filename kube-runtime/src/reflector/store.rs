@@ -251,13 +251,12 @@ where
     #[must_use]
     pub fn remove(&self, key: &ObjectRef<K>) -> Option<Arc<K>> {
         let mut store = self.store.write();
-        store.remove_entry(key).map(|(k, obj)| {
-            let mut k = k.clone();
-            match k.extra.remaining_lookups {
+        store.remove_entry(key).map(|(mut key, obj)| {
+            match key.extra.remaining_lookups {
                 Some(..=1) | None => (),
                 Some(lookups) => {
-                    k.extra.remaining_lookups = Some(lookups - 1);
-                    store.insert(k, obj.clone());
+                    key.extra.remaining_lookups = Some(lookups - 1);
+                    store.insert(key, obj.clone());
                 }
             };
 

@@ -73,7 +73,7 @@ where
 
     // Return a number of active subscribers to this shared sender.
     pub(crate) fn subscribers(&self) -> usize {
-        self.dispatch_tx.receiver_count() - 1
+        self.dispatch_tx.receiver_count()
     }
 }
 
@@ -241,6 +241,7 @@ pub(crate) mod test {
 
         let (_, writer) = reflector::store_shared(10);
         let mut subscriber = pin!(writer.subscribe().unwrap());
+        let mut other_subscriber = pin!(writer.subscribe().unwrap());
         let mut reflect = pin!(st.reflect_shared(writer));
 
         // Deleted events should be skipped by subscriber.
@@ -248,7 +249,8 @@ pub(crate) mod test {
             poll!(reflect.next()),
             Poll::Ready(Some(Ok(Event::Delete(_))))
         ));
-        assert_eq!(poll!(subscriber.next()), Poll::Pending);
+        assert_eq!(poll!(subscriber.next()), Poll::Ready(Some(foo.clone())));
+        assert_eq!(poll!(other_subscriber.next()), Poll::Ready(Some(foo.clone())));
 
         assert!(matches!(
             poll!(reflect.next()),

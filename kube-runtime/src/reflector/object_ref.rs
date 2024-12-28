@@ -57,6 +57,7 @@ pub trait Lookup {
             extra: Extra {
                 resource_version: self.resource_version().map(Cow::into_owned),
                 uid: self.uid().map(Cow::into_owned),
+                remaining_lookups: None,
             },
         }
     }
@@ -156,6 +157,8 @@ pub struct Extra {
     pub resource_version: Option<String>,
     /// The uid of the object
     pub uid: Option<String>,
+    /// Number of remaining cache lookups on this reference
+    pub remaining_lookups: Option<usize>,
 }
 
 impl<K: Lookup> ObjectRef<K>
@@ -225,6 +228,7 @@ impl<K: Lookup> ObjectRef<K> {
                 extra: Extra {
                     resource_version: None,
                     uid: Some(owner.uid.clone()),
+                    remaining_lookups: None,
                 },
             })
         } else {
@@ -271,6 +275,7 @@ impl<K: Lookup> From<ObjectRef<K>> for ObjectReference {
             extra: Extra {
                 resource_version,
                 uid,
+                ..
             },
         } = val;
         ObjectReference {
@@ -351,6 +356,7 @@ mod tests {
             extra: Extra {
                 resource_version: Some("123".to_string()),
                 uid: Some("638ffacd-f666-4402-ba10-7848c66ef576".to_string()),
+                remaining_lookups: None,
             },
             ..minimal.clone()
         };

@@ -107,8 +107,14 @@ where
                 self.store.write().insert(key, obj);
             }
             watcher::Event::Delete(obj) => {
-                let key = obj.to_object_ref(self.dyntype.clone());
-                self.store.write().remove(&key);
+                let mut key = obj.to_object_ref(self.dyntype.clone());
+                let mut store = self.store.write();
+                store.remove(&key);
+                if self.dispatcher.is_some() {
+                    // Re-insert the entry with updated key, as insert on its own doesnt modify the key
+                    key.extra.remaining_lookups = self.dispatcher.as_ref().map(|d| d.subscribers());
+                    store.insert(key, Arc::new(obj.clone()));
+                }
             }
             watcher::Event::Init => {
                 self.buffer = AHashMap::new();
@@ -157,6 +163,12 @@ where
                     for obj_ref in obj_refs {
                         dispatcher.broadcast(obj_ref).await;
                     }
+                }
+
+                watcher::Event::Delete(obj) => {
+                    let mut obj_ref = obj.to_object_ref(self.dyntype.clone());
+                    obj_ref.extra.remaining_lookups = Some(dispatcher.subscribers());
+                    dispatcher.broadcast(obj_ref).await;
                 }
 
                 _ => {}
@@ -234,6 +246,23 @@ where
             })
             // Clone to let go of the entry lock ASAP
             .cloned()
+    }
+
+    #[must_use]
+    pub fn remove(&self, key: &ObjectRef<K>) -> Option<Arc<K>> {
+        let mut store = self.store.write();
+        store.remove_entry(key).map(|(k, obj)| {
+            let mut k = k.clone();
+            match k.extra.remaining_lookups {
+                Some(..=1) | None => (),
+                Some(lookups) => {
+                    k.extra.remaining_lookups = Some(lookups - 1);
+                    store.insert(k, obj.clone());
+                }
+            };
+
+            obj
+        })
     }
 
     /// Return a full snapshot of the current values

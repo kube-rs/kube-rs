@@ -269,7 +269,7 @@ impl Recorder {
             deprecated_source: None,
             event_time: Some(MicroTime(now)),
             regarding: Some(reference.clone()),
-            note: ev.note.clone().map(Into::into),
+            note: ev.note.clone(),
             metadata: ObjectMeta {
                 namespace: reference.namespace.clone(),
                 name: Some(format!(

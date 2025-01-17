@@ -52,7 +52,7 @@ tower-http = { workspace = true, features = ["trace", "decompression-gzip"] }
 hyper = { workspace = true, features = ["client", "http1"] }
 hyper-util = { workspace = true, features = ["client-legacy", "http1", "tokio"] }
 thiserror.workspace = true
-backoff.workspace = true
+backon.workspace = true
 clap = { version = "4.0", default-features = false, features = ["std", "cargo", "derive"] }
 edit = "0.1.3"
 tokio-stream = { version = "0.1.9", features = ["net"] }

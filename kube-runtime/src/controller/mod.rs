@@ -8,10 +8,11 @@ use crate::{
         ObjectRef,
     },
     scheduler::{debounced_scheduler, ScheduleRequest},
-    utils::{trystream_try_via, CancelableJoinHandle, KubeRuntimeStreamExt, StreamBackoff, WatchStreamExt},
+    utils::{
+        trystream_try_via, Backoff, CancelableJoinHandle, KubeRuntimeStreamExt, StreamBackoff, WatchStreamExt,
+    },
     watcher::{self, metadata_watcher, watcher, DefaultBackoff},
 };
-use backoff::backoff::Backoff;
 use educe::Educe;
 use futures::{
     channel,
@@ -915,7 +916,7 @@ where
     /// The [`default_backoff`](crate::watcher::default_backoff) follows client-go conventions,
     /// but can be overridden by calling this method.
     #[must_use]
-    pub fn trigger_backoff(mut self, backoff: impl Backoff + Send + 'static) -> Self {
+    pub fn trigger_backoff(mut self, backoff: impl Backoff + 'static) -> Self {
         self.trigger_backoff = Box::new(backoff);
         self
     }

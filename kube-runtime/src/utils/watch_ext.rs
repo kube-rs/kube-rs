@@ -9,10 +9,12 @@ use crate::{
 };
 use kube_client::Resource;
 
-use crate::{reflector::store::Writer, utils::Reflect};
+use crate::{
+    reflector::store::Writer,
+    utils::{Backoff, Reflect},
+};
 
 use crate::watcher::DefaultBackoff;
-use backoff::backoff::Backoff;
 use futures::{Stream, TryStream};
 
 /// Extension trait for streams returned by [`watcher`](watcher()) or [`reflector`](crate::reflector::reflector)

@@ -9,7 +9,7 @@ mod reflect;
 mod stream_backoff;
 mod watch_ext;
 
-pub use backoff_reset_timer::ResetTimerBackoff;
+pub use backoff_reset_timer::{Backoff, ResetTimerBackoff};
 pub use event_decode::EventDecode;
 pub use event_modify::EventModify;
 pub use predicate::{predicates, Predicate, PredicateFilter};

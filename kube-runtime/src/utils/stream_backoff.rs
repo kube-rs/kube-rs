@@ -1,9 +1,10 @@
 use std::{future::Future, pin::Pin, task::Poll};
 
-use backoff::backoff::Backoff;
 use futures::{Stream, TryStream};
 use pin_project::pin_project;
 use tokio::time::{sleep, Instant, Sleep};
+
+use crate::utils::Backoff;
 
 /// Applies a [`Backoff`] policy to a [`Stream`]
 ///
@@ -71,7 +72,7 @@ impl<S: TryStream, B: Backoff> Stream for StreamBackoff<S, B> {
         let next_item = this.stream.try_poll_next(cx);
         match &next_item {
             Poll::Ready(Some(Err(_))) => {
-                if let Some(backoff_duration) = this.backoff.next_backoff() {
+                if let Some(backoff_duration) = this.backoff.next() {
                     let backoff_sleep = sleep(backoff_duration);
                     tracing::debug!(
                         deadline = ?backoff_sleep.deadline(),
@@ -98,16 +99,54 @@ impl<S: TryStream, B: Backoff> Stream for StreamBackoff<S, B> {
 pub(crate) mod tests {
     use std::{pin::pin, task::Poll, time::Duration};
 
+    use crate::utils::Backoff;
+
     use super::StreamBackoff;
-    use backoff::backoff::Backoff;
+    use backon::BackoffBuilder;
     use futures::{channel::mpsc, poll, stream, StreamExt};
+
+    pub struct ConstantBackoff {
+        inner: backon::ConstantBackoff,
+        delay: Duration,
+        max_times: usize,
+    }
+
+    impl ConstantBackoff {
+        pub fn new(delay: Duration, max_times: usize) -> Self {
+            Self {
+                inner: backon::ConstantBuilder::default()
+                    .with_delay(delay)
+                    .with_max_times(max_times)
+                    .build(),
+                delay,
+                max_times,
+            }
+        }
+    }
+
+    impl Iterator for ConstantBackoff {
+        type Item = Duration;
+
+        fn next(&mut self) -> Option<Duration> {
+            self.inner.next()
+        }
+    }
+
+    impl Backoff for ConstantBackoff {
+        fn reset(&mut self) {
+            self.inner = backon::ConstantBuilder::default()
+                .with_delay(self.delay)
+                .with_max_times(self.max_times)
+                .build();
+        }
+    }
 
     #[tokio::test]
     async fn stream_should_back_off() {
         tokio::time::pause();
         let tick = Duration::from_secs(1);
         let rx = stream::iter([Ok(0), Ok(1), Err(2), Ok(3), Ok(4)]);
-        let mut rx = pin!(StreamBackoff::new(rx, backoff::backoff::Constant::new(tick)));
+        let mut rx = pin!(StreamBackoff::new(rx, ConstantBackoff::new(tick, 10)));
         assert_eq!(poll!(rx.next()), Poll::Ready(Some(Ok(0))));
         assert_eq!(poll!(rx.next()), Poll::Ready(Some(Ok(1))));
         assert_eq!(poll!(rx.next()), Poll::Ready(Some(Err(2))));
@@ -149,14 +188,25 @@ pub(crate) mod tests {
     #[tokio::test]
     async fn backoff_should_close_when_requested() {
         assert_eq!(
-            StreamBackoff::new(
-                stream::iter([Ok(0), Ok(1), Err(2), Ok(3)]),
-                backoff::backoff::Stop {}
-            )
-            .collect::<Vec<_>>()
-            .await,
+            StreamBackoff::new(stream::iter([Ok(0), Ok(1), Err(2), Ok(3)]), StoppedBackoff {})
+                .collect::<Vec<_>>()
+                .await,
             vec![Ok(0), Ok(1), Err(2)]
         );
+    }
+
+    struct StoppedBackoff;
+
+    impl Backoff for StoppedBackoff {
+        fn reset(&mut self) {}
+    }
+
+    impl Iterator for StoppedBackoff {
+        type Item = Duration;
+
+        fn next(&mut self) -> Option<Duration> {
+            None
+        }
     }
 
     /// Dynamic backoff policy that is still deterministic and testable
@@ -174,12 +224,16 @@ pub(crate) mod tests {
         }
     }
 
-    impl Backoff for LinearBackoff {
-        fn next_backoff(&mut self) -> Option<Duration> {
+    impl Iterator for LinearBackoff {
+        type Item = Duration;
+
+        fn next(&mut self) -> Option<Duration> {
             self.current_duration += self.interval;
             Some(self.current_duration)
         }
+    }
 
+    impl Backoff for LinearBackoff {
         fn reset(&mut self) {
             self.current_duration = Duration::ZERO
         }

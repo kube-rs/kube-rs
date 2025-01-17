@@ -2,9 +2,10 @@
 //!
 //! See [`watcher`] for the primary entry point.
 
-use crate::utils::ResetTimerBackoff;
+use crate::utils::{Backoff, ResetTimerBackoff};
+
 use async_trait::async_trait;
-use backoff::{backoff::Backoff, ExponentialBackoff};
+use backon::BackoffBuilder;
 use educe::Educe;
 use futures::{stream::BoxStream, Stream, StreamExt};
 use kube_client::{
@@ -882,6 +883,52 @@ pub fn watch_object<K: Resource + Clone + DeserializeOwned + Debug + Send + 'sta
         })
 }
 
+struct ExponentialBackoff {
+    inner: backon::ExponentialBackoff,
+    min_delay: Duration,
+    max_delay: Duration,
+    factor: f32,
+    enable_jitter: bool,
+}
+
+impl ExponentialBackoff {
+    fn new(min_delay: Duration, max_delay: Duration, factor: f32, enable_jitter: bool) -> Self {
+        Self {
+            inner: backon::ExponentialBuilder::default()
+                .with_min_delay(min_delay)
+                .with_max_delay(max_delay)
+                .with_factor(factor)
+                .with_jitter()
+                .build(),
+            min_delay,
+            max_delay,
+            factor,
+            enable_jitter,
+        }
+    }
+}
+
+impl Backoff for ExponentialBackoff {
+    fn reset(&mut self) {
+        let mut builder = backon::ExponentialBuilder::default()
+            .with_min_delay(self.min_delay)
+            .with_max_delay(self.max_delay)
+            .with_factor(self.factor);
+        if self.enable_jitter {
+            builder = builder.with_jitter();
+        }
+        self.inner = builder.build();
+    }
+}
+
+impl Iterator for ExponentialBackoff {
+    type Item = Duration;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.inner.next()
+    }
+}
+
 /// Default watcher backoff inspired by Kubernetes' client-go.
 ///
 /// The parameters currently optimize for being kind to struggling apiservers.
@@ -898,24 +945,22 @@ type Strategy = ResetTimerBackoff<ExponentialBackoff>;
 impl Default for DefaultBackoff {
     fn default() -> Self {
         Self(ResetTimerBackoff::new(
-            backoff::ExponentialBackoffBuilder::new()
-                .with_initial_interval(Duration::from_millis(800))
-                .with_max_interval(Duration::from_secs(30))
-                .with_randomization_factor(1.0)
-                .with_multiplier(2.0)
-                .with_max_elapsed_time(None)
-                .build(),
+            ExponentialBackoff::new(Duration::from_millis(800), Duration::from_secs(30), 2.0, true),
             Duration::from_secs(120),
         ))
     }
 }
 
-impl Backoff for DefaultBackoff {
-    fn next_backoff(&mut self) -> Option<Duration> {
-        self.0.next_backoff()
-    }
+impl Iterator for DefaultBackoff {
+    type Item = Duration;
 
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0.next()
+    }
+}
+
+impl Backoff for DefaultBackoff {
     fn reset(&mut self) {
-        self.0.reset()
+        self.0.reset();
     }
 }

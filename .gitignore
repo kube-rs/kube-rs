@@ -2,7 +2,6 @@
 .idea/
 /target
 **/*.rs.bk
-Cargo.lock
 e2e/boot
 e2e/job
 examples/admission-controller-tls*

@@ -573,6 +573,8 @@ impl PostParams {
 ///
 /// See [kubernetes patch docs](https://kubernetes.io/docs/tasks/run-application/update-api-object-kubectl-patch/#use-a-json-merge-patch-to-update-a-deployment) for the older patch types.
 ///
+/// Note that applying an invalid patch will **not** always return an error. See an example of such a case below.
+///
 /// Note that patches have different effects on different fields depending on their merge strategies.
 /// These strategies are configurable when deriving your [`CustomResource`](https://docs.rs/kube-derive/*/kube_derive/derive.CustomResource.html#customizing-schemas).
 ///
@@ -602,6 +604,44 @@ impl PostParams {
 /// };
 /// let patch = Patch::Apply(&r);
 /// ```
+/// # Invalid Patches
+///
+/// In this example patch contains a `PodSpec` and **not** a complete or partial `Pod`.
+/// This patch is invalid as the full structure of a resource is required.
+/// The invalid patch will be accepted by the cluster, but no changes will be made.
+///
+/// Using serve-side style [`Apply`](Patch::Apply) patches mitigates this issue.
+///
+/// ```no_run
+/// use k8s_openapi::api::core::v1::{Pod, PodSpec};
+/// use kube::{Api, api::{PatchParams, Patch}};
+///
+/// # async fn wrapper() -> Result<(), Box<dyn std::error::Error>> {
+/// # let client = kube::Client::try_default().await?;
+/// let pods: Api<Pod> = Api::namespaced(client, "apps");
+/// let pp = PatchParams::default();
+///
+/// let invalid_patch: PodSpec = serde_json::from_value(serde_json::json!({
+///                 "activeDeadlineSeconds": 5
+/// }))?;
+///
+/// // This will have no effect on mypod.
+/// pods.patch("mypod", &pp, &Patch::Strategic(invalid_patch)).await?;
+///
+/// let valid_patch: Pod = serde_json::from_value(serde_json::json!({
+///           "spec": {
+///                 "activeDeadlineSeconds": 5
+///            }
+/// }))?;
+///
+/// // This will set activeDeadlineSeconds to 5.
+/// pods.patch("mypod", &pp, &Patch::Strategic(valid_patch)).await?;
+///
+/// # Ok(())
+/// # }
+/// ```
+///
+///
 #[non_exhaustive]
 #[derive(Debug, PartialEq, Clone)]
 pub enum Patch<T: Serialize> {

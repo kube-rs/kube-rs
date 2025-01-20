@@ -24,7 +24,7 @@ latest = ["k8s-openapi/latest"]
 [dev-dependencies]
 tokio-util.workspace = true
 assert-json-diff.workspace = true
-garde = { version = "0.21.0", default-features = false, features = ["derive"] }
+garde = { version = "0.22.0", default-features = false, features = ["derive"] }
 anyhow.workspace = true
 futures = { workspace = true, features = ["async-await"] }
 jsonpath-rust.workspace = true

@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 #![recursion_limit = "256"]
 
 use assert_json_diff::assert_json_eq;
@@ -29,6 +30,12 @@ use std::collections::{HashMap, HashSet};
     label("clux.dev", "cluxingv1"),
     label("clux.dev/persistence", "disabled"),
     rule = Rule::new("self.metadata.name == 'singleton'"),
+    status = "Status",
+    scale(
+        spec_replicas_path = ".spec.replicas",
+        status_replicas_path = ".status.replicas",
+        label_selector_path = ".status.labelSelector"
+    ),
 )]
 #[cel_validate(rule = Rule::new("has(self.nonNullable)"))]
 #[serde(rename_all = "camelCase")]
@@ -60,6 +67,13 @@ struct FooSpec {
     untagged_enum_person: UntaggedEnumPerson,
 
     set: HashSet<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct Status {
+    replicas: usize,
+    label_selector: String,
 }
 
 fn default_value() -> String {
@@ -231,6 +245,14 @@ fn test_crd_schema_matches_expected() {
                         }, {
                             "jsonPath": ".spec.nullable"
                         }],
+                        "subresources": {
+                            "status": {},
+                            "scale": {
+                                "specReplicasPath": ".spec.replicas",
+                                "labelSelectorPath": ".status.labelSelector",
+                                "statusReplicasPath": ".status.replicas"
+                            }
+                        },
                         "schema": {
                             "openAPIV3Schema": {
                                 "description": "Custom resource representing a Foo",
@@ -358,6 +380,24 @@ fn test_crd_schema_matches_expected() {
                                             "rule": "has(self.nonNullable)",
                                         }],
                                         "type": "object"
+                                    },
+                                    "status": {
+                                        "properties": {
+                                            "replicas": {
+                                                "type": "integer",
+                                                "format": "uint",
+                                                "minimum": 0.0,
+                                            },
+                                            "labelSelector": {
+                                                "type": "string"
+                                            }
+                                        },
+                                        "required": [
+                                            "labelSelector",
+                                            "replicas"
+                                        ],
+                                        "nullable": true,
+                                        "type": "object"
                                     }
                                 },
                                 "required": [
@@ -370,7 +410,6 @@ fn test_crd_schema_matches_expected() {
                                 "type": "object"
                             }
                         },
-                        "subresources": {},
                     }
                 ]
             }

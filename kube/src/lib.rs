@@ -227,7 +227,10 @@ mod test {
     #[derive(CustomResource, Deserialize, Serialize, Clone, Debug, JsonSchema)]
     #[kube(group = "clux.dev", version = "v1", kind = "Foo", namespaced)]
     #[kube(status = "FooStatus")]
-    #[kube(scale = r#"{"specReplicasPath":".spec.replicas", "statusReplicasPath":".status.replicas"}"#)]
+    #[kube(scale(
+        spec_replicas_path = ".spec.replicas",
+        status_replicas_path = ".status.replicas"
+    ))]
     #[kube(crates(kube_core = "crate::core"))] // for dev-dep test structure
     pub struct FooSpec {
         name: String,

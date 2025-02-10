@@ -243,6 +243,21 @@ where
         s.values().cloned().collect()
     }
 
+    /// Retrieve a list of cloned entries found by the given predicate
+    #[must_use]
+    pub fn filter<P>(&self, predicate: P) -> Vec<Arc<K>>
+    where
+        P: Fn(&K) -> bool,
+    {
+        self.store
+            .read()
+            .iter()
+            .map(|(_, k)| k)
+            .filter(|k| predicate(k.as_ref()))
+            .cloned()
+            .collect()
+    }
+
     /// Retrieve a `clone()` of the entry found by the given predicate
     #[must_use]
     pub fn find<P>(&self, predicate: P) -> Option<Arc<K>>
@@ -407,5 +422,55 @@ mod tests {
         assert_eq!(reader.len(), 2);
         let found = reader.find(|k| k.metadata.generation == Some(1234));
         assert_eq!(found.as_deref(), Some(&target_cm));
+    }
+
+    #[test]
+    fn filter_elements_in_store() {
+        let mut cm_list = vec![];
+
+        for i in 0..5 {
+            let cm = ConfigMap {
+                metadata: ObjectMeta {
+                    name: Some(format!("obj{i}")),
+                    namespace: None,
+                    generation: Some(i),
+                    ..ObjectMeta::default()
+                },
+                ..ConfigMap::default()
+            };
+
+            cm_list.push(cm);
+        }
+
+        let (reader, mut writer) = store::<ConfigMap>();
+        assert!(reader.is_empty());
+        for cm in &cm_list {
+            writer.apply_watcher_event(&watcher::Event::Apply(cm.clone()));
+        }
+
+        assert_eq!(reader.len(), 5);
+        assert!(reader.filter(|k| k.metadata.generation == Some(1234)).is_empty());
+
+        //0, 2, 4
+        let filtered = reader.filter(|k| k.metadata.generation.map(|o| o % 2) == Some(0));
+        assert_eq!(filtered.len(), 3);
+
+        let mut filtered_generatios = filtered
+            .into_iter()
+            .map(|k| k.metadata.generation.unwrap())
+            .collect::<Vec<_>>();
+        filtered_generatios.sort();
+
+        assert_eq!(filtered_generatios, vec![0, 2, 4]);
+
+        let mut target_cm = cm_list[0].clone();
+        target_cm.metadata.name = Some("obj_target".to_string());
+        target_cm.metadata.generation = Some(1234);
+        writer.apply_watcher_event(&watcher::Event::Apply(target_cm.clone()));
+        assert_eq!(reader.len(), 6);
+
+        let filtered = reader.filter(|k| k.metadata.generation == Some(1234));
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].as_ref(), &target_cm);
     }
 }

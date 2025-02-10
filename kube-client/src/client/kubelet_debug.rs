@@ -31,7 +31,7 @@ impl Client {
         let mut req =
             Request::kubelet_node_attach(kubelet_params, container, ap).map_err(Error::BuildRequest)?;
         req.extensions_mut().insert("kubelet_node_attach");
-        let stream = self.connect(req).await?;
+        let stream = self.connect_exec(req).await?;
         Ok(AttachedProcess::new(stream, ap))
     }
 
@@ -53,7 +53,7 @@ impl Client {
         let mut req = Request::kubelet_node_exec(kubelet_params, container, command, ap)
             .map_err(Error::BuildRequest)?;
         req.extensions_mut().insert("kubelet_node_exec");
-        let stream = self.connect(req).await?;
+        let stream = self.connect_exec(req).await?;
         Ok(AttachedProcess::new(stream, ap))
     }
 
@@ -69,8 +69,8 @@ impl Client {
         let mut req =
             Request::kubelet_node_portforward(kubelet_params, ports).map_err(Error::BuildRequest)?;
         req.extensions_mut().insert("kubelet_node_portforward");
-        let stream = self.connect(req).await?;
-        Ok(Portforwarder::new(stream, ports))
+        let connection = self.connect_portforward(req).await?;
+        Ok(Portforwarder::new(connection.into_stream(), ports))
     }
 
     /// Stream logs directly from node

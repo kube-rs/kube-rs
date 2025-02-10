@@ -510,7 +510,7 @@ where
     pub async fn attach(&self, name: &str, ap: &AttachParams) -> Result<AttachedProcess> {
         let mut req = self.request.attach(name, ap).map_err(Error::BuildRequest)?;
         req.extensions_mut().insert("attach");
-        let stream = self.client.connect(req).await?;
+        let stream = self.client.connect_exec(req).await?;
         Ok(AttachedProcess::new(stream, ap))
     }
 }
@@ -565,7 +565,7 @@ where
             .exec(name, command, ap)
             .map_err(Error::BuildRequest)?;
         req.extensions_mut().insert("exec");
-        let stream = self.client.connect(req).await?;
+        let stream = self.client.connect_exec(req).await?;
         Ok(AttachedProcess::new(stream, ap))
     }
 }
@@ -606,7 +606,7 @@ where
             .request
             .portforward(name, ports)
             .map_err(Error::BuildRequest)?;
-        let stream = self.client.connect(req).await?;
-        Ok(Portforwarder::new(stream, ports))
+        let connection = self.client.connect_portforward(req).await?;
+        Ok(Portforwarder::new(connection.into_stream(), ports))
     }
 }

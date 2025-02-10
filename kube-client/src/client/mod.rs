@@ -80,6 +80,29 @@ pub struct Client {
     default_ns: String,
 }
 
+/// Represents a WebSocket connection.
+/// Value returned by [`Client::connect`].
+#[cfg(feature = "ws")]
+#[cfg_attr(docsrs, doc(cfg(feature = "ws")))]
+pub struct Connection {
+    stream: WebSocketStream<TokioIo<hyper::upgrade::Upgraded>>,
+    protocol: upgrade::StreamProtocol,
+}
+
+#[cfg(feature = "ws")]
+#[cfg_attr(docsrs, doc(cfg(feature = "ws")))]
+impl Connection {
+    /// Return true if the stream supports graceful close signaling.
+    pub fn supports_stream_close(&self) -> bool {
+        self.protocol.supports_stream_close()
+    }
+
+    /// Transform into the raw WebSocketStream.
+    pub fn into_stream(self) -> WebSocketStream<TokioIo<hyper::upgrade::Upgraded>> {
+        self.stream
+    }
+}
+
 /// Constructors and low-level api interfaces.
 ///
 /// Most users only need [`Client::try_default`] or [`Client::new`] from this block.
@@ -187,13 +210,36 @@ impl Client {
         Ok(res)
     }
 
-    /// Make WebSocket connection.
+    /// Make WebSocket connection exec operations.
     #[cfg(feature = "ws")]
     #[cfg_attr(docsrs, doc(cfg(feature = "ws")))]
-    pub async fn connect(
+    pub async fn connect_exec(
+        &self,
+        mut request: Request<Vec<u8>>,
+    ) -> Result<Connection> {
+        upgrade::StreamProtocol::add_to_exec_headers(request.headers_mut());
+        self.connect_internal(request).await
+    }
+
+    /// Make WebSocket connection for portforward operations.
+    #[cfg(feature = "ws")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "ws")))]
+    pub async fn connect_portforward(
+        &self,
+        mut request: Request<Vec<u8>>,
+    ) -> Result<Connection> {
+        upgrade::StreamProtocol::add_to_portforward_headers(request.headers_mut());
+        self.connect_internal(request).await
+    }
+
+    /// Make WebSocket connection.
+    /// The http::header::SEC_WEBSOCKET_PROTOCOL header must be set on the request before calling this.
+    #[cfg(feature = "ws")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "ws")))]
+    async fn connect_internal(
         &self,
         request: Request<Vec<u8>>,
-    ) -> Result<WebSocketStream<TokioIo<hyper::upgrade::Upgraded>>> {
+    ) -> Result<Connection> {
         use http::header::HeaderValue;
         let (mut parts, body) = request.into_parts();
         parts
@@ -211,25 +257,17 @@ impl Client {
             http::header::SEC_WEBSOCKET_KEY,
             key.parse().expect("valid header value"),
         );
-        // Use the binary subprotocol v4, to get JSON `Status` object in `error` channel (3).
-        // There's no official documentation about this protocol, but it's described in
-        // [`k8s.io/apiserver/pkg/util/wsstream/conn.go`](https://git.io/JLQED).
-        // There's a comment about v4 and `Status` object in
-        // [`kublet/cri/streaming/remotecommand/httpstream.go`](https://git.io/JLQEh).
-        parts.headers.insert(
-            http::header::SEC_WEBSOCKET_PROTOCOL,
-            HeaderValue::from_static(upgrade::WS_PROTOCOL),
-        );
 
         let res = self.send(Request::from_parts(parts, Body::from(body))).await?;
-        upgrade::verify_response(&res, &key).map_err(Error::UpgradeConnection)?;
+        let protocol = upgrade::verify_response(&res, &key).map_err(Error::UpgradeConnection)?;
         match hyper::upgrade::on(res).await {
-            Ok(upgraded) => Ok(WebSocketStream::from_raw_socket(
+            Ok(upgraded) => Ok(Connection {
+                stream: WebSocketStream::from_raw_socket(
                 TokioIo::new(upgraded),
                 ws::protocol::Role::Client,
                 None,
             )
-            .await),
+            .await, protocol}),
 
             Err(e) => Err(Error::UpgradeConnection(
                 UpgradeConnectionError::GetPendingUpgrade(e),

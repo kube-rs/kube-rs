@@ -12,10 +12,9 @@ use tokio::{
     io::{AsyncRead, AsyncWrite, AsyncWriteExt, DuplexStream},
     select,
 };
-use tokio_tungstenite::{
-    tungstenite::{self as ws},
-    WebSocketStream,
-};
+use tokio_tungstenite::tungstenite as ws;
+
+use crate::client::Connection;
 
 use super::AttachParams;
 
@@ -112,9 +111,7 @@ pub struct AttachedProcess {
 }
 
 impl AttachedProcess {
-    pub(crate) fn new<S>(stream: WebSocketStream<S>, ap: &AttachParams) -> Self
-    where
-        S: AsyncRead + AsyncWrite + Unpin + Sized + Send + 'static,
+    pub(crate) fn new(connection: Connection, ap: &AttachParams) -> Self
     {
         // To simplify the implementation, always create a pipe for stdin.
         // The caller does not have access to it unless they had requested.
@@ -140,7 +137,7 @@ impl AttachedProcess {
         };
 
         let task = tokio::spawn(start_message_loop(
-            stream,
+            connection,
             stdin_reader,
             stdout_writer,
             stderr_writer,
@@ -259,7 +256,7 @@ impl AttachedProcess {
     }
 }
 
-// theses values come from here: https://github.com/kubernetes/kubernetes/blob/master/pkg/kubelet/cri/streaming/remotecommand/websocket.go#L34
+// theses values come from here: https://github.com/kubernetes/kubernetes/blob/master/staging/src/k8s.io/apimachinery/pkg/util/remotecommand/constants.go#L57
 const STDIN_CHANNEL: u8 = 0;
 const STDOUT_CHANNEL: u8 = 1;
 const STDERR_CHANNEL: u8 = 2;
@@ -267,23 +264,28 @@ const STDERR_CHANNEL: u8 = 2;
 const STATUS_CHANNEL: u8 = 3;
 // resize channel is use to send TerminalSize object to change the size of the terminal
 const RESIZE_CHANNEL: u8 = 4;
+/// Used to signal that a channel has reached EOF. Only works on V5 of the protocol.
+const CLOSE_CHANNEL: u8 = 255;
 
-async fn start_message_loop<S>(
-    stream: WebSocketStream<S>,
+async fn start_message_loop(
+    connection: Connection,
     stdin: impl AsyncRead + Unpin,
     mut stdout: Option<impl AsyncWrite + Unpin>,
     mut stderr: Option<impl AsyncWrite + Unpin>,
     status_tx: StatusSender,
     mut terminal_size_rx: Option<TerminalSizeReceiver>,
 ) -> Result<(), Error>
-where
-    S: AsyncRead + AsyncWrite + Unpin + Sized + Send + 'static,
 {
+    let supports_stream_close = connection.supports_stream_close();
+    let stream = connection.into_stream();
     let mut stdin_stream = tokio_util::io::ReaderStream::new(stdin);
     let (mut server_send, raw_server_recv) = stream.split();
     // Work with filtered messages to reduce noise.
     let mut server_recv = raw_server_recv.filter_map(filter_message).boxed();
     let mut have_terminal_size_rx = terminal_size_rx.is_some();
+
+    // True until we reach EOF for stdin.
+    let mut stdin_is_open = true;
 
     loop {
         let terminal_size_next = async {
@@ -319,7 +321,7 @@ where
                     },
                 }
             },
-            stdin_message = stdin_stream.next() => {
+            stdin_message = stdin_stream.next(), if stdin_is_open => {
                 match stdin_message {
                     Some(Ok(bytes)) => {
                         if !bytes.is_empty() {
@@ -337,9 +339,24 @@ where
                     }
                     None => {
                         // Stdin closed (writer half dropped).
-                        // Let the server know and disconnect.
-                        server_send.close().await.map_err(Error::SendClose)?;
-                        break;
+                        // Let the server know we reached the end of stdin.
+                        if supports_stream_close {
+                            // Signal stdin has reached EOF.
+                            // See: https://github.com/kubernetes/kubernetes/blob/master/staging/src/k8s.io/apimachinery/pkg/util/httpstream/wsstream/conn.go#L346
+                            let vec = vec![CLOSE_CHANNEL, STDIN_CHANNEL];
+                            server_send
+                                .send(ws::Message::binary(vec))
+                                .await
+                                .map_err(Error::SendStdin)?;
+                        } else {
+                            // Best we can do is trigger the whole websocket to close.
+                            // We may miss out on any remaining stdout data that has not
+                            // been sent yet.
+                            server_send.close().await.map_err(Error::SendClose)?;
+                        }
+
+                        // Do not check stdin_stream for data in future loops.
+                        stdin_is_open = false;
                     }
                 }
             },

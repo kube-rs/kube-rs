@@ -3,6 +3,7 @@
 use darling::{FromDeriveInput, FromMeta};
 use proc_macro2::{Ident, Literal, Span, TokenStream};
 use quote::{ToTokens, TokenStreamExt as _};
+use serde::Deserialize;
 use syn::{parse_quote, Data, DeriveInput, Expr, Path, Visibility};
 
 /// Values we can parse from #[kube(attrs)]
@@ -33,7 +34,12 @@ struct KubeAttrs {
     printcolums: Vec<String>,
     #[darling(multiple)]
     selectable: Vec<String>,
-    scale: Option<String>,
+
+    /// Customize the scale subresource, see [Kubernetes docs][1].
+    ///
+    /// [1]: https://kubernetes.io/docs/tasks/extend-kubernetes/custom-resources/custom-resource-definitions/#scale-subresource
+    scale: Option<Scale>,
+
     #[darling(default)]
     crates: Crates,
     #[darling(multiple, rename = "annotation")]
@@ -188,6 +194,122 @@ impl FromMeta for SchemaMode {
             "manual" => Ok(SchemaMode::Manual),
             "derived" => Ok(SchemaMode::Derived),
             x => Err(darling::Error::unknown_value(x)),
+        }
+    }
+}
+
+/// This struct mirrors the fields of `k8s_openapi::CustomResourceSubresourceScale` to support
+/// parsing from the `#[kube]` attribute.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Scale {
+    pub(crate) label_selector_path: Option<String>,
+    pub(crate) spec_replicas_path: String,
+    pub(crate) status_replicas_path: String,
+}
+
+// This custom FromMeta implementation is needed for two reasons:
+//
+// - To enable backwards-compatibility. Up to version 0.97.0 it was only possible to set scale
+//   subresource values as a JSON string.
+// - To be able to declare the scale sub-resource as a list of typed fields. The from_list impl uses
+//   the derived implementation as inspiration.
+impl FromMeta for Scale {
+    /// This is implemented for backwards-compatibility. It allows that the scale subresource can
+    /// be deserialized from a JSON string.
+    fn from_string(value: &str) -> darling::Result<Self> {
+        serde_json::from_str(value).map_err(darling::Error::custom)
+    }
+
+    fn from_list(items: &[darling::ast::NestedMeta]) -> darling::Result<Self> {
+        let mut errors = darling::Error::accumulator();
+
+        let mut label_selector_path: (bool, Option<Option<String>>) = (false, None);
+        let mut spec_replicas_path: (bool, Option<String>) = (false, None);
+        let mut status_replicas_path: (bool, Option<String>) = (false, None);
+
+        for item in items {
+            match item {
+                darling::ast::NestedMeta::Meta(meta) => {
+                    let name = darling::util::path_to_string(meta.path());
+
+                    match name.as_str() {
+                        "label_selector_path" => {
+                            if !label_selector_path.0 {
+                                let path = errors.handle(darling::FromMeta::from_meta(meta));
+                                label_selector_path = (true, Some(path))
+                            } else {
+                                errors.push(
+                                    darling::Error::duplicate_field("label_selector_path").with_span(&meta),
+                                );
+                            }
+                        }
+                        "spec_replicas_path" => {
+                            if !spec_replicas_path.0 {
+                                let path = errors.handle(darling::FromMeta::from_meta(meta));
+                                spec_replicas_path = (true, path)
+                            } else {
+                                errors.push(
+                                    darling::Error::duplicate_field("spec_replicas_path").with_span(&meta),
+                                );
+                            }
+                        }
+                        "status_replicas_path" => {
+                            if !status_replicas_path.0 {
+                                let path = errors.handle(darling::FromMeta::from_meta(meta));
+                                status_replicas_path = (true, path)
+                            } else {
+                                errors.push(
+                                    darling::Error::duplicate_field("status_replicas_path").with_span(&meta),
+                                );
+                            }
+                        }
+                        other => errors.push(darling::Error::unknown_field(other)),
+                    }
+                }
+                darling::ast::NestedMeta::Lit(lit) => {
+                    errors.push(darling::Error::unsupported_format("literal").with_span(&lit.span()))
+                }
+            }
+        }
+
+        if !spec_replicas_path.0 && spec_replicas_path.1.is_none() {
+            errors.push(darling::Error::missing_field("spec_replicas_path"));
+        }
+
+        if !status_replicas_path.0 && status_replicas_path.1.is_none() {
+            errors.push(darling::Error::missing_field("status_replicas_path"));
+        }
+
+        errors.finish()?;
+
+        Ok(Self {
+            label_selector_path: label_selector_path.1.unwrap_or_default(),
+            spec_replicas_path: spec_replicas_path.1.unwrap(),
+            status_replicas_path: status_replicas_path.1.unwrap(),
+        })
+    }
+}
+
+impl Scale {
+    fn to_tokens(&self, k8s_openapi: &Path) -> TokenStream {
+        let apiext = quote! {
+            #k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1
+        };
+
+        let label_selector_path = self
+            .label_selector_path
+            .as_ref()
+            .map_or_else(|| quote! { None }, |p| quote! { Some(#p.into()) });
+        let spec_replicas_path = &self.spec_replicas_path;
+        let status_replicas_path = &self.status_replicas_path;
+
+        quote! {
+            #apiext::CustomResourceSubresourceScale {
+                label_selector_path: #label_selector_path,
+                spec_replicas_path: #spec_replicas_path.into(),
+                status_replicas_path: #status_replicas_path.into()
+            }
         }
     }
 }
@@ -452,7 +574,13 @@ pub(crate) fn derive(input: proc_macro2::TokenStream) -> proc_macro2::TokenStrea
         .map(|s| format!(r#"{{ "jsonPath": "{s}" }}"#))
         .collect();
     let fields = format!("[ {} ]", fields.join(","));
-    let scale_code = if let Some(s) = scale { s } else { "".to_string() };
+    let scale = scale.map_or_else(
+        || quote! { None },
+        |s| {
+            let scale = s.to_tokens(&k8s_openapi);
+            quote! { Some(#scale) }
+        },
+    );
 
     // Ensure it generates for the correct CRD version (only v1 supported now)
     let apiext = quote! {
@@ -564,11 +692,7 @@ pub(crate) fn derive(input: proc_macro2::TokenStream) -> proc_macro2::TokenStrea
                 #k8s_openapi::k8s_if_ge_1_30! {
                     let fields : Vec<#apiext::SelectableField> = #serde_json::from_str(#fields).expect("valid selectableField column json");
                 }
-                let scale: Option<#apiext::CustomResourceSubresourceScale> = if #scale_code.is_empty() {
-                    None
-                } else {
-                    #serde_json::from_str(#scale_code).expect("valid scale subresource json")
-                };
+                let scale: Option<#apiext::CustomResourceSubresourceScale> = #scale;
                 let categories: Vec<String> = #serde_json::from_str(#categories_json).expect("valid categories");
                 let shorts : Vec<String> = #serde_json::from_str(#short_json).expect("valid shortnames");
                 let subres = if #has_status {

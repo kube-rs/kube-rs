@@ -129,8 +129,22 @@ mod resource;
 /// NOTE: `CustomResourceDefinition`s require a schema. If `schema = "disabled"` then
 /// `Self::crd()` will not be installable into the cluster as-is.
 ///
-/// ## `#[kube(scale = r#"json"#)]`
+/// ## `#[kube(scale(...))]`
+///
 /// Allow customizing the scale struct for the [scale subresource](https://kubernetes.io/docs/tasks/extend-kubernetes/custom-resources/custom-resource-definitions/#subresources).
+/// It should be noted, that the status subresource must also be enabled to use the scale subresource. This is because
+/// the `statusReplicasPath` only accepts JSONPaths under `.status`.
+///
+/// ```ignore
+/// #[kube(scale(
+///     specReplicasPath = ".spec.replicas",
+///     statusReplicaPath = ".status.replicas",
+///     labelSelectorPath = ".spec.labelSelector"
+/// ))]
+/// ```
+///
+/// The deprecated way of customizing the scale subresource using a raw JSON string is still
+/// support for backwards-compatibility.
 ///
 /// ## `#[kube(printcolumn = r#"json"#)]`
 /// Allows adding straight json to [printcolumns](https://kubernetes.io/docs/tasks/extend-kubernetes/custom-resources/custom-resource-definitions/#additional-printer-columns).

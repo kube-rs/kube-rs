@@ -22,7 +22,10 @@ use serde::{Deserialize, Serialize};
     derive = "PartialEq",
     derive = "Default",
     shortname = "f",
-    scale = r#"{"specReplicasPath":".spec.replicas", "statusReplicasPath":".status.replicas"}"#,
+    scale(
+        spec_replicas_path = ".spec.replicas",
+        status_replicas_path = ".status.replicas"
+    ),
     printcolumn = r#"{"name":"Spec", "type":"string", "description":"name of foo", "jsonPath":".spec.name"}"#,
     selectable = "spec.name"
 )]

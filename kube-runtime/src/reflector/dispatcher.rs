@@ -70,6 +70,11 @@ where
     pub(crate) fn subscribe(&self, reader: Store<K>) -> ReflectHandle<K> {
         ReflectHandle::new(reader, self.dispatch_tx.new_receiver())
     }
+
+    // Return a number of active subscribers to this shared sender.
+    pub(crate) fn subscribers(&self) -> usize {
+        self.dispatch_tx.receiver_count()
+    }
 }
 
 /// A handle to a shared stream reader
@@ -132,10 +137,12 @@ where
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let mut this = self.project();
         match ready!(this.rx.as_mut().poll_next(cx)) {
-            Some(obj_ref) => this
-                .reader
-                .get(&obj_ref)
-                .map_or(Poll::Pending, |obj| Poll::Ready(Some(obj))),
+            Some(obj_ref) => if obj_ref.extra.remaining_lookups.is_some() {
+                this.reader.remove(&obj_ref)
+            } else {
+                this.reader.get(&obj_ref)
+            }
+            .map_or(Poll::Pending, |obj| Poll::Ready(Some(obj))),
             None => Poll::Ready(None),
         }
     }
@@ -145,8 +152,7 @@ where
 #[cfg(test)]
 pub(crate) mod test {
     use crate::{
-        watcher::{Error, Event},
-        WatchStreamExt,
+        reflector::ObjectRef, watcher::{Error, Event}, WatchStreamExt
     };
     use std::{pin::pin, sync::Arc, task::Poll};
 
@@ -232,8 +238,9 @@ pub(crate) mod test {
         let foo = Arc::new(foo);
         let _bar = Arc::new(bar);
 
-        let (_, writer) = reflector::store_shared(10);
+        let (reader, writer) = reflector::store_shared(10);
         let mut subscriber = pin!(writer.subscribe().unwrap());
+        let mut other_subscriber = pin!(writer.subscribe().unwrap());
         let mut reflect = pin!(st.reflect_shared(writer));
 
         // Deleted events should be skipped by subscriber.
@@ -241,7 +248,11 @@ pub(crate) mod test {
             poll!(reflect.next()),
             Poll::Ready(Some(Ok(Event::Delete(_))))
         ));
-        assert_eq!(poll!(subscriber.next()), Poll::Pending);
+        assert_eq!(reader.get(&ObjectRef::from_obj(&foo)), Some(foo.clone()));
+        assert_eq!(poll!(subscriber.next()), Poll::Ready(Some(foo.clone())));
+        assert_eq!(reader.get(&ObjectRef::from_obj(&foo)), Some(foo.clone()));
+        assert_eq!(poll!(other_subscriber.next()), Poll::Ready(Some(foo.clone())));
+        assert_eq!(reader.get(&ObjectRef::from_obj(&foo)), None);
 
         assert!(matches!(
             poll!(reflect.next()),

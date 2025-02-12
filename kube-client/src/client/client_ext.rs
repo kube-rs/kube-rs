@@ -5,9 +5,10 @@ use k8s_openapi::{
 };
 use kube_core::{
     object::ObjectList,
-    params::{GetParams, ListParams},
+    params::{GetParams, ListParams, Patch, PatchParams},
     request::Request,
-    ApiResource, ClusterResourceScope, DynamicResourceScope, NamespaceResourceScope, Resource,
+    ApiResource, ClusterResourceScope, DynamicResourceScope, NamespaceResourceScope, Resource, ResourceExt,
+    TypeMeta,
 };
 use serde::{de::DeserializeOwned, Serialize};
 use std::fmt::Debug;
@@ -230,6 +231,18 @@ pub enum NamespaceError {
     MissingName,
 }
 
+#[derive(Serialize, Clone, Debug)]
+/// ApplyObject allows to wrap an object into Patch::Apply compatible structure,
+/// with populated TypeMeta.
+pub struct ApplyObject<R: Serialize> {
+    /// Contains the API version and type of the request.
+    #[serde(flatten)]
+    pub types: TypeMeta,
+    /// Contains the object data.
+    #[serde(flatten)]
+    pub data: R,
+}
+
 /// Generic client extensions for the `unstable-client` feature
 ///
 /// These methods allow users to query across a wide-array of resources without needing
@@ -382,6 +395,88 @@ impl Client {
             .map_err(Error::BuildRequest)?;
         req.extensions_mut().insert("list");
         self.request::<ObjectList<K>>(req).await
+    }
+
+    /// Perform apply patch on the provided `Resource` implementing type `K`
+    ///
+    /// ```no_run
+    /// # use k8s_openapi::api::core::v1::Pod;
+    /// # use k8s_openapi::api::core::v1::Service;
+    /// # use kube::client::scope::Namespace;
+    /// # use kube::prelude::*;
+    /// # use kube::api::{PatchParams, Patch};
+    /// # async fn wrapper() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let client: kube::Client = todo!();
+    /// let pod: Pod = client.get("some_pod", &Namespace::from("default")).await?;
+    /// let pp = &PatchParams::apply("controller").force();
+    /// // Perform an apply patch on the resource
+    /// client.apply(&pod, pp).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn apply<K>(&self, resource: &K, pp: &PatchParams) -> Result<K>
+    where
+        K: ResourceExt + Serialize + DeserializeOwned + Clone + Debug,
+        <K as Resource>::DynamicType: Default,
+    {
+        let meta = resource.meta();
+        let name = meta.name.as_ref().ok_or(Error::NameResolve)?;
+        let url = K::url_path(&Default::default(), meta.namespace.as_deref());
+        let req = Request::new(url);
+
+        let apply = ApplyObject::<K> {
+            types: TypeMeta::resource::<K>(),
+            data: {
+                let mut resource = resource.clone();
+                resource.meta_mut().managed_fields = None;
+                resource
+            },
+        };
+        let req = req
+            .patch(name, pp, &Patch::Apply(apply))
+            .map_err(Error::BuildRequest)?;
+        self.request::<K>(req).await
+    }
+
+    /// Perform apply patch on the provided `Resource` status, implementing type `K`
+    ///
+    /// ```no_run
+    /// # use k8s_openapi::api::core::v1::Pod;
+    /// # use k8s_openapi::api::core::v1::Service;
+    /// # use kube::client::scope::Namespace;
+    /// # use kube::prelude::*;
+    /// # use kube::api::{PatchParams, Patch};
+    /// # async fn wrapper() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let client: kube::Client = todo!();
+    /// let pod: Pod = client.get("some_pod", &Namespace::from("default")).await?;
+    /// let pp = &PatchParams::apply("controller").force();
+    /// // Perform an apply patch on the resource status
+    /// client.apply_status(&pod, pp).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn apply_status<K>(&self, resource: &K, pp: &PatchParams) -> Result<K>
+    where
+        K: ResourceExt + Serialize + DeserializeOwned + Clone + Debug,
+        <K as Resource>::DynamicType: Default,
+    {
+        let meta = resource.meta();
+        let name = meta.name.as_ref().ok_or(Error::NameResolve)?;
+        let url = K::url_path(&Default::default(), meta.namespace.as_deref());
+        let req = Request::new(url);
+
+        let apply = ApplyObject::<K> {
+            types: TypeMeta::resource::<K>(),
+            data: {
+                let mut resource = resource.clone();
+                resource.meta_mut().managed_fields = None;
+                resource
+            },
+        };
+        let req = req
+            .patch_subresource("status", name, pp, &Patch::Apply(apply))
+            .map_err(Error::BuildRequest)?;
+        self.request::<K>(req).await
     }
 }
 

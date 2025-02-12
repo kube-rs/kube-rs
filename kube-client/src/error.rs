@@ -108,6 +108,12 @@ pub enum Error {
     #[cfg_attr(docsrs, doc(cfg(feature = "unstable-client")))]
     #[error("Reference resolve error: {0}")]
     RefResolve(String),
+
+    /// Error resolving resource name
+    #[cfg(feature = "unstable-client")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "unstable-client")))]
+    #[error("Resource has no name")]
+    NameResolve,
 }
 
 #[derive(Error, Debug)]

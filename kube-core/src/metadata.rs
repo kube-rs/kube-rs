@@ -28,10 +28,10 @@ impl TypeMeta {
     /// assert_eq!(type_meta.kind, "PodList");
     /// assert_eq!(type_meta.api_version, "v1");
     /// ```
-    pub fn list<K: Resource<DynamicType = ()>>() -> Self {
+    pub fn list<K: Resource<DynamicType = impl Default>>() -> Self {
         TypeMeta {
-            api_version: K::api_version(&()).into(),
-            kind: K::kind(&()).to_string() + "List",
+            api_version: K::api_version(&Default::default()).into(),
+            kind: K::kind(&Default::default()).to_string() + "List",
         }
     }
 
@@ -45,10 +45,10 @@ impl TypeMeta {
     /// assert_eq!(type_meta.kind, "Pod");
     /// assert_eq!(type_meta.api_version, "v1");
     /// ```
-    pub fn resource<K: Resource<DynamicType = ()>>() -> Self {
+    pub fn resource<K: Resource<DynamicType = impl Default>>() -> Self {
         TypeMeta {
-            api_version: K::api_version(&()).into(),
-            kind: K::kind(&()).into(),
+            api_version: K::api_version(&Default::default()).into(),
+            kind: K::kind(&Default::default()).into(),
         }
     }
 }

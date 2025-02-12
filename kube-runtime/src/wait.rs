@@ -9,6 +9,7 @@ use thiserror::Error;
 
 use crate::watcher::{self, watch_object};
 
+/// Wait errors from [`await_condition`]
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("failed to probe for whether the condition is fulfilled yet: {0}")]
@@ -79,21 +80,18 @@ where
 /// use k8s_openapi::api::core::v1::Pod;
 /// fn my_custom_condition(my_cond: &str) -> impl Condition<Pod> + '_ {
 ///     move |obj: Option<&Pod>| {
-///         if let Some(pod) = &obj {
-///             if let Some(status) = &pod.status {
-///                 if let Some(conds) = &status.conditions {
-///                     if let Some(pcond) = conds.iter().find(|c| c.type_ == my_cond) {
-///                         return pcond.status == "True";
-///                     }
-///                 }
-///             }
-///         }
-///         false
+///         let cond = obj.status.as_ref()?.conditions.as_ref()?.iter().find(|c| c.type_ == my_cond);
+///         Some(cond.status == "True")
 ///     }
 /// }
 /// ```
 pub trait Condition<K> {
-    fn matches_object(&self, obj: Option<&K>) -> bool;
+    /// Condition function giving a clear answer
+    fn matches_object(&self, obj: Option<&K>) -> bool {
+        self.matches_object_option(obj).unwrap_or_default()
+    }
+    /// Condition function giving an option wrapped answer
+    fn matches_object_option(&self, _obj: Option<&K>) -> Option<bool>;
 
     /// Returns a `Condition` that holds if `self` does not
     ///
@@ -153,8 +151,13 @@ pub trait Condition<K> {
     }
 }
 
-impl<K, F: Fn(Option<&K>) -> bool> Condition<K> for F {
-    fn matches_object(&self, obj: Option<&K>) -> bool {
+//impl<K, F: Fn(Option<&K>) -> bool> Condition<K> for F {
+//    fn matches_object(&self, obj: Option<&K>) -> bool {
+//        (self)(obj)
+//    }
+//}
+impl<K, F: Fn(Option<&K>) -> Option<bool>> Condition<K> for F {
+    fn matches_object_option(&self, obj: Option<&K>) -> Option<bool> {
         (self)(obj)
     }
 }
@@ -176,12 +179,12 @@ pub mod conditions {
     #[must_use]
     pub fn is_deleted<K: Resource>(uid: &str) -> impl Condition<K> + '_ {
         move |obj: Option<&K>| {
-            obj.map_or(
+            Some(obj.map_or(
                 // Object is not found, success!
                 true,
                 // Object is found, but a changed uid would mean that it was deleted and recreated
                 |obj| obj.meta().uid.as_deref() != Some(uid),
-            )
+            ))
         }
     }
 
@@ -192,48 +195,36 @@ pub mod conditions {
     #[must_use]
     pub fn is_crd_established() -> impl Condition<CustomResourceDefinition> {
         |obj: Option<&CustomResourceDefinition>| {
-            if let Some(o) = obj {
-                if let Some(s) = &o.status {
-                    if let Some(conds) = &s.conditions {
-                        if let Some(pcond) = conds.iter().find(|c| c.type_ == "Established") {
-                            return pcond.status == "True";
-                        }
-                    }
-                }
-            }
-            false
+            let cond = obj
+                .as_ref()?
+                .status
+                .as_ref()?
+                .conditions
+                .as_ref()?
+                .iter()
+                .find(|c| c.type_ == "Established")?;
+            Some(cond.status == "True")
         }
     }
 
     /// An await condition for `Pod` that returns `true` once it is running
     #[must_use]
     pub fn is_pod_running() -> impl Condition<Pod> {
-        |obj: Option<&Pod>| {
-            if let Some(pod) = &obj {
-                if let Some(status) = &pod.status {
-                    if let Some(phase) = &status.phase {
-                        return phase == "Running";
-                    }
-                }
-            }
-            false
-        }
+        |obj: Option<&Pod>| Some(obj?.status.as_ref()?.phase.as_ref()? == "Running")
     }
 
     /// An await condition for `Job` that returns `true` once it is completed
     #[must_use]
     pub fn is_job_completed() -> impl Condition<Job> {
         |obj: Option<&Job>| {
-            if let Some(job) = &obj {
-                if let Some(s) = &job.status {
-                    if let Some(conds) = &s.conditions {
-                        if let Some(pcond) = conds.iter().find(|c| c.type_ == "Complete") {
-                            return pcond.status == "True";
-                        }
-                    }
-                }
-            }
-            false
+            let cond = obj?
+                .status
+                .as_ref()?
+                .conditions
+                .as_ref()?
+                .iter()
+                .find(|c| c.type_ == "Complete")?;
+            Some(cond.status == "True")
         }
     }
 
@@ -241,8 +232,8 @@ pub mod conditions {
     #[derive(Copy, Clone, Debug, PartialEq, Eq)]
     pub struct Not<A>(pub(super) A);
     impl<A: Condition<K>, K> Condition<K> for Not<A> {
-        fn matches_object(&self, obj: Option<&K>) -> bool {
-            !self.0.matches_object(obj)
+        fn matches_object_option(&self, obj: Option<&K>) -> Option<bool> {
+            Some(!self.0.matches_object(obj))
         }
     }
 
@@ -254,8 +245,8 @@ pub mod conditions {
         A: Condition<K>,
         B: Condition<K>,
     {
-        fn matches_object(&self, obj: Option<&K>) -> bool {
-            self.0.matches_object(obj) && self.1.matches_object(obj)
+        fn matches_object_option(&self, obj: Option<&K>) -> Option<bool> {
+            Some(self.0.matches_object(obj) && self.1.matches_object(obj))
         }
     }
 
@@ -267,8 +258,8 @@ pub mod conditions {
         A: Condition<K>,
         B: Condition<K>,
     {
-        fn matches_object(&self, obj: Option<&K>) -> bool {
-            self.0.matches_object(obj) || self.1.matches_object(obj)
+        fn matches_object_option(&self, obj: Option<&K>) -> Option<bool> {
+            Some(self.0.matches_object(obj) || self.1.matches_object(obj))
         }
     }
 }

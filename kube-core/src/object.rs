@@ -3,8 +3,12 @@ use crate::{
     discovery::ApiResource,
     metadata::{ListMeta, ObjectMeta, TypeMeta},
     resource::{DynamicResourceScope, Resource},
+    DynamicObject,
 };
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{
+    de::{self, DeserializeOwned},
+    Deserialize, Deserializer, Serialize,
+};
 use std::borrow::Cow;
 
 /// A generic Kubernetes object list
@@ -16,7 +20,7 @@ use std::borrow::Cow;
 /// and is generally produced from list/watch/delete collection queries on an [`Resource`](super::Resource).
 ///
 /// This is almost equivalent to [`k8s_openapi::List<T>`](k8s_openapi::List), but iterable.
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Debug, Clone)]
 pub struct ObjectList<T>
 where
     T: Clone,
@@ -129,6 +133,42 @@ impl<'a, T: Clone> IntoIterator for &'a mut ObjectList<T> {
 
     fn into_iter(self) -> Self::IntoIter {
         self.items.iter_mut()
+    }
+}
+
+#[derive(Deserialize)]
+struct DynamicList {
+    #[serde(flatten, deserialize_with = "deserialize_v1_list_as_default")]
+    types: TypeMeta,
+
+    #[serde(default)]
+    metadata: ListMeta,
+
+    #[serde(
+        deserialize_with = "deserialize_null_as_default",
+        bound(deserialize = "Vec<DynamicObject>: Deserialize<'de>")
+    )]
+    items: Vec<DynamicObject>,
+}
+
+impl<'de, T: DeserializeOwned + Clone> serde::Deserialize<'de> for ObjectList<T> {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<ObjectList<T>, D::Error> {
+        let DynamicList {
+            types,
+            metadata,
+            mut items,
+        } = DynamicList::deserialize(d)?;
+        let mut resources = vec![];
+        for o in items.iter_mut() {
+            o.types = Some(types.clone().singular());
+            let item = serde_json::to_value(o).map_err(de::Error::custom)?;
+            resources.push(serde_json::from_value(item).map_err(de::Error::custom)?)
+        }
+        Ok(ObjectList::<T> {
+            types,
+            metadata,
+            items: resources,
+        })
     }
 }
 
@@ -357,9 +397,10 @@ mod test {
         assert_eq!(mypod.namespace().unwrap(), "dev");
         assert_eq!(mypod.name_unchecked(), "blog");
         assert!(mypod.status().is_none());
-        assert_eq!(mypod.spec().containers[0], ContainerSimple {
-            image: "blog".into()
-        });
+        assert_eq!(
+            mypod.spec().containers[0],
+            ContainerSimple { image: "blog".into() }
+        );
 
         assert_eq!(PodSimple::api_version(&ar), "v1");
         assert_eq!(PodSimple::version(&ar), "v1");

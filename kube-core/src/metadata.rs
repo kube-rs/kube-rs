@@ -4,7 +4,7 @@ use std::{borrow::Cow, marker::PhantomData};
 pub use k8s_openapi::apimachinery::pkg::apis::meta::v1::{ListMeta, ObjectMeta};
 use serde::{Deserialize, Serialize};
 
-use crate::{DynamicObject, Resource};
+use crate::{ApiResource, DynamicObject, GroupVersionKind, Resource};
 
 /// Type information that is flattened into every kubernetes object
 #[derive(Deserialize, Serialize, Clone, Default, Debug, Eq, PartialEq, Hash)]
@@ -49,6 +49,24 @@ impl TypeMeta {
         TypeMeta {
             api_version: K::api_version(&()).into(),
             kind: K::kind(&()).into(),
+        }
+    }
+
+    /// Construct a new `TypeMeta` for the object from the list `TypeMeta`.
+    ///
+    /// ```
+    /// # use k8s_openapi::api::core::v1::Pod;
+    /// # use kube_core::TypeMeta;
+    ///
+    /// let mut type_meta = TypeMeta::resource::<Pod>();
+    /// type_meta.kind = "PodList".to_string();
+    /// assert_eq!(type_meta.clone().singular().kind, "Pod");
+    /// assert_eq!(type_meta.clone().singular().api_version, "v1");
+    /// ```
+    pub fn singular(self) -> Self {
+        Self {
+            kind: self.kind.strip_suffix("List").unwrap_or(&self.kind).to_string(),
+            ..self
         }
     }
 }
@@ -172,6 +190,123 @@ impl<K: Resource> Resource for PartialObjectMeta<K> {
 
     fn meta_mut(&mut self) -> &mut ObjectMeta {
         &mut self.metadata
+    }
+}
+
+///
+pub trait TypedResource: Resource + Sized {
+    ///
+    fn type_meta(&self) -> TypeMeta;
+    ///
+    fn gvk(&self) -> GroupVersionKind;
+    ///
+    fn kind(&self) -> Cow<'_, str>;
+    ///
+    fn group(&self) -> Cow<'_, str>;
+    ///
+    fn version(&self) -> Cow<'_, str>;
+    ///
+    fn plural(&self) -> Cow<'_, str>;
+}
+
+impl<K> TypedResource for K
+where
+    K: Resource,
+    (K, K::DynamicType): TypedResourceImpl<Resource = K>,
+{
+    fn type_meta(&self) -> TypeMeta {
+        <(K, K::DynamicType) as TypedResourceImpl>::type_meta(self)
+    }
+
+    fn gvk(&self) -> GroupVersionKind {
+        <(K, K::DynamicType) as TypedResourceImpl>::gvk(self)
+    }
+
+    fn kind(&self) -> Cow<'_, str> {
+        <(K, K::DynamicType) as TypedResourceImpl>::kind(self)
+    }
+    ///
+    fn group(&self) -> Cow<'_, str> {
+        <(K, K::DynamicType) as TypedResourceImpl>::group(self)
+    }
+    ///
+    fn version(&self) -> Cow<'_, str> {
+        <(K, K::DynamicType) as TypedResourceImpl>::version(self)
+    }
+    ///
+    fn plural(&self) -> Cow<'_, str> {
+        <(K, K::DynamicType) as TypedResourceImpl>::plural(self)
+    }
+}
+
+#[doc(hidden)]
+// Workaround for https://github.com/rust-lang/rust/issues/20400
+pub trait TypedResourceImpl {
+    type Resource: Resource;
+    fn type_meta(res: &Self::Resource) -> TypeMeta;
+    fn gvk(res: &Self::Resource) -> GroupVersionKind;
+    fn kind(res: &Self::Resource) -> Cow<'_, str>;
+    fn group(res: &Self::Resource) -> Cow<'_, str>;
+    fn version(res: &Self::Resource) -> Cow<'_, str>;
+    fn plural(res: &Self::Resource) -> Cow<'_, str>;
+}
+
+impl<K> TypedResourceImpl for (K, ())
+where
+    K: Resource<DynamicType = ()>,
+{
+    type Resource = K;
+
+    fn type_meta(_: &Self::Resource) -> TypeMeta {
+        TypeMeta::resource::<K>()
+    }
+
+    fn gvk(res: &Self::Resource) -> GroupVersionKind {
+        GroupVersionKind::gvk(&res.group(), &res.version(), &res.kind())
+    }
+
+    fn kind(_: &Self::Resource) -> Cow<'_, str> {
+        K::kind(&())
+    }
+
+    fn group(_: &Self::Resource) -> Cow<'_, str> {
+        K::group(&())
+    }
+
+    fn version(_: &Self::Resource) -> Cow<'_, str> {
+        K::version(&())
+    }
+
+    fn plural(_: &Self::Resource) -> Cow<'_, str> {
+        K::plural(&())
+    }
+}
+
+impl TypedResourceImpl for (DynamicObject, ApiResource) {
+    type Resource = DynamicObject;
+
+    fn type_meta(obj: &Self::Resource) -> TypeMeta {
+        obj.types.clone().unwrap_or_default()
+    }
+
+    fn gvk(res: &Self::Resource) -> GroupVersionKind {
+        res.type_meta().try_into().unwrap_or_default()
+    }
+
+    fn kind(res: &Self::Resource) -> Cow<'_, str> {
+        Cow::from(res.type_meta().kind)
+    }
+
+    fn group(res: &Self::Resource) -> Cow<'_, str> {
+        Cow::from(res.gvk().group)
+    }
+
+    fn version(res: &Self::Resource) -> Cow<'_, str> {
+        Cow::from(res.gvk().version)
+    }
+
+    fn plural(res: &Self::Resource) -> Cow<'_, str> {
+        Cow::from(ApiResource::from_gvk(&res.gvk()).plural)
     }
 }
 

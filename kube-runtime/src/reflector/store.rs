@@ -13,6 +13,12 @@ use thiserror::Error;
 
 type Cache<K> = Arc<RwLock<AHashMap<ObjectRef<K>, Arc<K>>>>;
 
+/// A writable `CacheWriter` trait
+pub trait CacheWriter<K> {
+    /// Applies a single watcher event to the store
+    fn apply_watcher_event(&mut self, event: &watcher::Event<K>);
+}
+
 /// A writable Store handle
 ///
 /// This is exclusive since it's not safe to share a single `Store` between multiple reflectors.
@@ -98,8 +104,40 @@ where
             .map(|dispatcher| dispatcher.subscribe(self.as_reader()))
     }
 
+    /// Broadcast an event to any downstream listeners subscribed on the store
+    pub(crate) async fn dispatch_event(&mut self, event: &watcher::Event<K>) {
+        if let Some(ref mut dispatcher) = self.dispatcher {
+            match event {
+                watcher::Event::Apply(obj) => {
+                    let obj_ref = obj.to_object_ref(self.dyntype.clone());
+                    // TODO (matei): should this take a timeout to log when backpressure has
+                    // been applied for too long, e.g. 10s
+                    dispatcher.broadcast(obj_ref).await;
+                }
+
+                watcher::Event::InitDone => {
+                    let obj_refs: Vec<_> = {
+                        let store = self.store.read();
+                        store.keys().cloned().collect()
+                    };
+
+                    for obj_ref in obj_refs {
+                        dispatcher.broadcast(obj_ref).await;
+                    }
+                }
+
+                _ => {}
+            }
+        }
+    }
+}
+
+impl <K: 'static + Lookup + Clone> CacheWriter<K> for Writer<K>
+where
+    K::DynamicType: Eq + Hash + Clone,
+    {
     /// Applies a single watcher event to the store
-    pub fn apply_watcher_event(&mut self, event: &watcher::Event<K>) {
+    fn apply_watcher_event(&mut self, event: &watcher::Event<K>) {
         match event {
             watcher::Event::Apply(obj) => {
                 let key = obj.to_object_ref(self.dyntype.clone());
@@ -133,33 +171,6 @@ where
                 if let Some(ready_tx) = self.ready_tx.take() {
                     ready_tx.init(())
                 }
-            }
-        }
-    }
-
-    /// Broadcast an event to any downstream listeners subscribed on the store
-    pub(crate) async fn dispatch_event(&mut self, event: &watcher::Event<K>) {
-        if let Some(ref mut dispatcher) = self.dispatcher {
-            match event {
-                watcher::Event::Apply(obj) => {
-                    let obj_ref = obj.to_object_ref(self.dyntype.clone());
-                    // TODO (matei): should this take a timeout to log when backpressure has
-                    // been applied for too long, e.g. 10s
-                    dispatcher.broadcast(obj_ref).await;
-                }
-
-                watcher::Event::InitDone => {
-                    let obj_refs: Vec<_> = {
-                        let store = self.store.read();
-                        store.keys().cloned().collect()
-                    };
-
-                    for obj_ref in obj_refs {
-                        dispatcher.broadcast(obj_ref).await;
-                    }
-                }
-
-                _ => {}
             }
         }
     }
@@ -309,7 +320,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::{store, Writer};
-    use crate::{reflector::ObjectRef, watcher};
+    use crate::{reflector::{store::CacheWriter as _, ObjectRef}, watcher};
     use k8s_openapi::api::core::v1::ConfigMap;
     use kube_client::api::ObjectMeta;
 

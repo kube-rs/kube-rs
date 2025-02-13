@@ -12,7 +12,7 @@ use thiserror::Error;
 pub struct ParseGroupVersionError(pub String);
 
 /// Core information about an API Resource.
-#[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Deserialize, Serialize, Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub struct GroupVersionKind {
     /// API group
     pub group: String,

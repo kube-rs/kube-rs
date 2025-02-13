@@ -1,4 +1,5 @@
 use crate::{
+    reflector::store::CacheWriter,
     utils::{
         event_decode::EventDecode,
         event_modify::EventModify,
@@ -9,10 +10,10 @@ use crate::{
 };
 use kube_client::Resource;
 
-use crate::{
-    reflector::store::Writer,
-    utils::{Backoff, Reflect},
-};
+#[cfg(feature = "unstable-runtime-subscribe")]
+use crate::reflector::store::Writer;
+
+use crate::utils::{Backoff, Reflect};
 
 use crate::watcher::DefaultBackoff;
 use futures::{Stream, TryStream};
@@ -174,7 +175,7 @@ pub trait WatchStreamExt: Stream {
     /// ```
     ///
     /// [`Store`]: crate::reflector::Store
-    fn reflect<K>(self, writer: Writer<K>) -> Reflect<Self, K>
+    fn reflect<K>(self, writer: impl CacheWriter<K>) -> Reflect<Self, K, impl CacheWriter<K>>
     where
         Self: Stream<Item = watcher::Result<watcher::Event<K>>> + Sized,
         K: Resource + Clone + 'static,

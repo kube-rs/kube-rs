@@ -1683,13 +1683,13 @@ mod tests {
     use super::{Action, APPLIER_REQUEUE_BUF_SIZE};
     use crate::{
         applier,
-        reflector::{self, ObjectRef},
+        reflector::{self, store::CacheWriter as _, ObjectRef},
         watcher::{self, metadata_watcher, watcher, Event},
         Config, Controller,
     };
     use futures::{Stream, StreamExt, TryStreamExt};
     use k8s_openapi::api::core::v1::ConfigMap;
-    use kube_client::{core::ObjectMeta, Api, Resource};
+    use kube_client::{api::TypeMeta, core::ObjectMeta, Api, Resource};
     use serde::de::DeserializeOwned;
     use tokio::time::timeout;
 

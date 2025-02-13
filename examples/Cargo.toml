@@ -22,6 +22,7 @@ ws = ["kube/ws"]
 latest = ["k8s-openapi/latest"]
 
 [dev-dependencies]
+parking_lot.workspace = true
 tokio-util.workspace = true
 assert-json-diff.workspace = true
 garde = { version = "0.22.0", default-features = false, features = ["derive"] }
@@ -129,6 +130,10 @@ path = "log_stream.rs"
 [[example]]
 name = "multi_watcher"
 path = "multi_watcher.rs"
+
+[[example]]
+name = "multi_reflector"
+path = "multi_reflector.rs"
 
 [[example]]
 name = "pod_api"

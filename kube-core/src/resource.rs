@@ -8,6 +8,8 @@ use std::{borrow::Cow, collections::BTreeMap};
 
 pub use k8s_openapi::{ClusterResourceScope, NamespaceResourceScope, ResourceScope, SubResourceScope};
 
+use crate::GroupVersionKind;
+
 /// Indicates that a [`Resource`] is of an indeterminate dynamic scope.
 pub struct DynamicResourceScope {}
 impl ResourceScope for DynamicResourceScope {}
@@ -53,6 +55,11 @@ pub trait Resource {
     ///
     /// This is known as the resource in apimachinery, we rename it for disambiguation.
     fn plural(dt: &Self::DynamicType) -> Cow<'_, str>;
+
+    /// Generates an object reference for the resource
+    fn gvk(dt: &Self::DynamicType) -> GroupVersionKind {
+        GroupVersionKind::gvk(&Self::group(dt), &Self::version(dt), &Self::kind(dt))
+    }
 
     /// Creates a url path for http requests for this resource
     fn url_path(dt: &Self::DynamicType, namespace: Option<&str>) -> String {

@@ -10,10 +10,11 @@ use http_body::{Body as HttpBody, Frame, SizeHint};
 use http_body_util::{combinators::UnsyncBoxBody, BodyExt};
 
 /// A request body.
+#[derive(Debug)]
 pub struct Body {
     kind: Kind,
 }
-
+/*
 impl fmt::Debug for Body {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut builder = f.debug_struct("Body");
@@ -23,8 +24,9 @@ impl fmt::Debug for Body {
         };
         builder.finish()
     }
-}
+}*/
 
+#[derive(Debug)]
 enum Kind {
     Once(Option<Bytes>),
     Wrap(UnsyncBoxBody<Bytes, Box<dyn StdError + Send + Sync>>),

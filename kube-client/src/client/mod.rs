@@ -169,6 +169,7 @@ impl Client {
     /// create a proxy server or application-level gateway between localhost and the API server.
     pub async fn send(&self, request: Request<Body>) -> Result<Response<Body>> {
         let mut svc = self.inner.clone();
+        tracing::trace!("actual send body: {:?}", request.body());
         let res = svc
             .ready()
             .await
@@ -254,7 +255,11 @@ impl Client {
     /// Perform a raw HTTP request against the API and get back the response
     /// as a string
     pub async fn request_text(&self, request: Request<Vec<u8>>) -> Result<String> {
-        let res = self.send(request.map(Body::from)).await?;
+        let body = request.map(Body::from);
+        tracing::trace!("body: {body:?}");
+        let res = self.send(body).await?;
+        tracing::trace!("requesting: {:?}: {}", res.version(), res.status().as_str());
+        tracing::trace!("headers: {:?}", res.headers());
         let res = handle_api_errors(res).await?;
         let body_bytes = res.into_body().collect().await?.to_bytes();
         let text = String::from_utf8(body_bytes.to_vec()).map_err(Error::FromUtf8)?;
@@ -305,8 +310,10 @@ impl Client {
     where
         T: Clone + DeserializeOwned,
     {
-        let res = self.send(request.map(Body::from)).await?;
-        // trace!("Streaming from {} -> {}", res.url(), res.status().as_str());
+        let body = request.map(Body::from);
+        tracing::trace!("body: {body:?}");
+        let res = self.send(body).await?;
+        tracing::trace!("Streaming {:?}: {}", res.version(), res.status().as_str());
         tracing::trace!("headers: {:?}", res.headers());
 
         let frames = FramedRead::new(

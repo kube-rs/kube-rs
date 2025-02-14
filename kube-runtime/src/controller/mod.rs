@@ -214,6 +214,7 @@ pub fn trigger_owners<KOwner, S>(
     stream: S,
     owner_type: KOwner::DynamicType,
     child_type: <S::Ok as Resource>::DynamicType,
+    owner_inherits_namespace: bool,
 ) -> impl Stream<Item = Result<ReconcileRequest<KOwner>, S::Error>>
 where
     S: TryStream,
@@ -224,7 +225,10 @@ where
 {
     let mapper = move |obj: S::Ok| {
         let meta = obj.meta().clone();
-        let ns = meta.namespace;
+        let ns = match owner_inherits_namespace {
+            true => meta.namespace,
+            false => None,
+        };
         let owner_type = owner_type.clone();
         meta.owner_references
             .into_iter()
@@ -963,6 +967,7 @@ where
             metadata_watcher(api, wc).touched_objects(),
             self.dyntype.clone(),
             dyntype,
+            true,
         );
         self.trigger_selector.push(child_watcher.boxed());
         self
@@ -1031,7 +1036,7 @@ where
     where
         Child::DynamicType: Debug + Eq + Hash + Clone,
     {
-        let child_watcher = trigger_owners(trigger, self.dyntype.clone(), dyntype);
+        let child_watcher = trigger_owners(trigger, self.dyntype.clone(), dyntype, true);
         self.trigger_selector.push(child_watcher.boxed());
         self
     }

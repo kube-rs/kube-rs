@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use chrono::{DateTime, Utc};
 use http::{header::HeaderName, HeaderValue};
 #[cfg(feature = "openssl-tls")] use hyper::rt::{Read, Write};
 use hyper_util::client::legacy::connect::HttpConnector;
@@ -44,7 +45,10 @@ pub trait ConfigExt: private::Sealed {
     /// ```
     #[cfg_attr(docsrs, doc(cfg(feature = "rustls-tls")))]
     #[cfg(feature = "rustls-tls")]
-    fn rustls_https_connector(&self) -> Result<hyper_rustls::HttpsConnector<HttpConnector>>;
+    fn rustls_https_connector(
+        &self,
+        identity: Option<Vec<u8>>,
+    ) -> Result<hyper_rustls::HttpsConnector<HttpConnector>>;
 
     /// Create [`hyper_rustls::HttpsConnector`] based on config and `connector`.
     ///
@@ -67,28 +71,8 @@ pub trait ConfigExt: private::Sealed {
     fn rustls_https_connector_with_connector<H>(
         &self,
         connector: H,
+        identity: Option<Vec<u8>>,
     ) -> Result<hyper_rustls::HttpsConnector<H>>;
-
-    /// Create [`rustls::ClientConfig`] based on config.
-    /// # Example
-    ///
-    /// ```rust
-    /// # async fn doc() -> Result<(), Box<dyn std::error::Error>> {
-    /// # use hyper_util::client::legacy::connect::HttpConnector;
-    /// # use kube::{client::ConfigExt, Config};
-    /// let config = Config::infer().await?;
-    /// let https = {
-    ///     let rustls_config = std::sync::Arc::new(config.rustls_client_config()?);
-    ///     let mut http = HttpConnector::new();
-    ///     http.enforce_http(false);
-    ///     hyper_rustls::HttpsConnector::from((http, rustls_config))
-    /// };
-    /// # Ok(())
-    /// # }
-    /// ```
-    #[cfg_attr(docsrs, doc(cfg(feature = "rustls-tls")))]
-    #[cfg(feature = "rustls-tls")]
-    fn rustls_client_config(&self) -> Result<rustls::ClientConfig>;
 
     /// Create [`hyper_openssl::HttpsConnector`] based on config.
     /// # Example
@@ -103,8 +87,10 @@ pub trait ConfigExt: private::Sealed {
     /// ```
     #[cfg_attr(docsrs, doc(cfg(feature = "openssl-tls")))]
     #[cfg(feature = "openssl-tls")]
-    fn openssl_https_connector(&self)
-        -> Result<hyper_openssl::client::legacy::HttpsConnector<HttpConnector>>;
+    fn openssl_https_connector(
+        &self,
+        identity: Option<Vec<u8>>,
+    ) -> Result<hyper_openssl::client::legacy::HttpsConnector<HttpConnector>>;
 
     /// Create [`hyper_openssl::HttpsConnector`] based on config and `connector`.
     /// # Example
@@ -125,6 +111,7 @@ pub trait ConfigExt: private::Sealed {
     fn openssl_https_connector_with_connector<H>(
         &self,
         connector: H,
+        identity: Option<Vec<u8>>,
     ) -> Result<hyper_openssl::client::legacy::HttpsConnector<H>>
     where
         H: tower::Service<http::Uri> + Send,
@@ -151,7 +138,10 @@ pub trait ConfigExt: private::Sealed {
     /// ```
     #[cfg_attr(docsrs, doc(cfg(feature = "openssl-tls")))]
     #[cfg(feature = "openssl-tls")]
-    fn openssl_ssl_connector_builder(&self) -> Result<openssl::ssl::SslConnectorBuilder>;
+    fn openssl_ssl_connector_builder(
+        &self,
+        identity: Option<Vec<u8>>,
+    ) -> Result<openssl::ssl::SslConnectorBuilder>;
 }
 
 mod private {
@@ -176,7 +166,7 @@ impl ConfigExt for Config {
             Auth::RefreshableToken(refreshable) => {
                 Some(AuthLayer(Either::Right(AsyncFilterLayer::new(refreshable))))
             }
-            Auth::Certificate(_client_certificate_data, _client_key_data) => None,
+            Auth::Certificate(_client_certificate_data, _client_key_data, _) => None,
         })
     }
 
@@ -206,33 +196,32 @@ impl ConfigExt for Config {
     }
 
     #[cfg(feature = "rustls-tls")]
-    fn rustls_client_config(&self) -> Result<rustls::ClientConfig> {
-        let identity = self.exec_identity_pem().or_else(|| self.identity_pem());
-        tls::rustls_tls::rustls_client_config(
-            identity.as_deref(),
-            self.root_cert.as_deref(),
-            self.accept_invalid_certs,
-        )
-        .map_err(Error::RustlsTls)
-    }
-
-    #[cfg(feature = "rustls-tls")]
-    fn rustls_https_connector(&self) -> Result<hyper_rustls::HttpsConnector<HttpConnector>> {
+    fn rustls_https_connector(
+        &self,
+        identity: Option<Vec<u8>>,
+    ) -> Result<hyper_rustls::HttpsConnector<HttpConnector>> {
         let mut connector = HttpConnector::new();
         connector.enforce_http(false);
-        self.rustls_https_connector_with_connector(connector)
+        self.rustls_https_connector_with_connector(connector, identity)
     }
 
     #[cfg(feature = "rustls-tls")]
     fn rustls_https_connector_with_connector<H>(
         &self,
         connector: H,
+        identity: Option<Vec<u8>>,
     ) -> Result<hyper_rustls::HttpsConnector<H>> {
         use hyper_rustls::FixedServerNameResolver;
 
         use crate::client::tls::rustls_tls;
 
-        let rustls_config = self.rustls_client_config()?;
+        let rustls_config = tls::rustls_tls::rustls_client_config(
+            identity.as_deref(),
+            self.root_cert.as_deref(),
+            self.accept_invalid_certs,
+        )
+        .map_err(Error::RustlsTls)?;
+
         let mut builder = hyper_rustls::HttpsConnectorBuilder::new()
             .with_tls_config(rustls_config)
             .https_or_http();
@@ -248,8 +237,10 @@ impl ConfigExt for Config {
     }
 
     #[cfg(feature = "openssl-tls")]
-    fn openssl_ssl_connector_builder(&self) -> Result<openssl::ssl::SslConnectorBuilder> {
-        let identity = self.exec_identity_pem().or_else(|| self.identity_pem());
+    fn openssl_ssl_connector_builder(
+        &self,
+        identity: Option<Vec<u8>>,
+    ) -> Result<openssl::ssl::SslConnectorBuilder> {
         // TODO: pass self.tls_server_name for openssl
         tls::openssl_tls::ssl_connector_builder(identity.as_ref(), self.root_cert.as_ref())
             .map_err(|e| Error::OpensslTls(tls::openssl_tls::Error::CreateSslConnector(e)))
@@ -258,16 +249,18 @@ impl ConfigExt for Config {
     #[cfg(feature = "openssl-tls")]
     fn openssl_https_connector(
         &self,
+        identity: Option<Vec<u8>>,
     ) -> Result<hyper_openssl::client::legacy::HttpsConnector<HttpConnector>> {
         let mut connector = HttpConnector::new();
         connector.enforce_http(false);
-        self.openssl_https_connector_with_connector(connector)
+        self.openssl_https_connector_with_connector(connector, identity)
     }
 
     #[cfg(feature = "openssl-tls")]
     fn openssl_https_connector_with_connector<H>(
         &self,
         connector: H,
+        identity: Option<Vec<u8>>,
     ) -> Result<hyper_openssl::client::legacy::HttpsConnector<H>>
     where
         H: tower::Service<http::Uri> + Send,
@@ -277,7 +270,7 @@ impl ConfigExt for Config {
     {
         let mut https = hyper_openssl::client::legacy::HttpsConnector::with_connector(
             connector,
-            self.openssl_ssl_connector_builder()?,
+            self.openssl_ssl_connector_builder(identity)?,
         )
         .map_err(|e| Error::OpensslTls(tls::openssl_tls::Error::CreateHttpsConnector(e)))?;
         if self.accept_invalid_certs {
@@ -291,22 +284,30 @@ impl ConfigExt for Config {
 }
 
 impl Config {
+    /// Retrieves an identity when an exec plugin returns a client certificate and key instead of a token.
+    ///
+    /// This is necessary to check on TLS configuration vs tokens which can be added in as an AuthLayer.
+    ///
+    /// # Returns
+    ///
+    /// A tuple containing an optional vector of bytes representing the identity and an optional expiration date.
+
     // This is necessary to retrieve an identity when an exec plugin
     // returns a client certificate and key instead of a token.
     // This has be to be checked on TLS configuration vs tokens
     // which can be added in as an AuthLayer.
-    fn exec_identity_pem(&self) -> Option<Vec<u8>> {
+    pub fn exec_identity_pem(&self) -> (Option<Vec<u8>>, Option<DateTime<Utc>>) {
         match Auth::try_from(&self.auth_info) {
-            Ok(Auth::Certificate(client_certificate_data, client_key_data)) => {
+            Ok(Auth::Certificate(client_certificate_data, client_key_data, expiratiom)) => {
                 const NEW_LINE: u8 = b'\n';
 
                 let mut buffer = client_key_data.expose_secret().as_bytes().to_vec();
                 buffer.push(NEW_LINE);
                 buffer.extend_from_slice(client_certificate_data.as_bytes());
                 buffer.push(NEW_LINE);
-                Some(buffer)
+                (Some(buffer), expiratiom)
             }
-            _ => None,
+            _ => (None, None),
         }
     }
 }

@@ -18,7 +18,7 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
 
     let config = Config::infer().await?;
-    let https = config.rustls_https_connector()?;
+    let https = config.rustls_https_connector(None)?;
     let service = ServiceBuilder::new()
         .layer(config.base_uri_layer())
         // showcase rate limiting; max 10rps, and 4 concurrent
@@ -57,7 +57,7 @@ async fn main() -> anyhow::Result<()> {
         .map_err(BoxError::from)
         .service(hyper_util::client::legacy::Client::builder(TokioExecutor::new()).build(https));
 
-    let client = Client::new(service, config.default_namespace);
+    let client = Client::new(service, config.default_namespace, None);
 
     let pods: Api<Pod> = Api::default_namespaced(client);
     for p in pods.list(&Default::default()).await? {

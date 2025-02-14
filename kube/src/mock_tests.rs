@@ -154,6 +154,6 @@ impl ApiServerVerifier {
 // Create a test context with a mocked kube client
 fn testcontext() -> (Client, ApiServerVerifier) {
     let (mock_service, handle) = tower_test::mock::pair::<Request<Body>, Response<Body>>();
-    let mock_client = Client::new(mock_service, "default");
+    let mock_client = Client::new(mock_service, "default", None);
     (mock_client, ApiServerVerifier(handle))
 }

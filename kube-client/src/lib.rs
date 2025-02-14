@@ -153,11 +153,11 @@ mod test {
         use hyper_util::rt::TokioExecutor;
 
         let config = Config::infer().await?;
-        let https = config.rustls_https_connector()?;
+        let https = config.rustls_https_connector(None)?;
         let service = ServiceBuilder::new()
             .layer(config.base_uri_layer())
             .service(hyper_util::client::legacy::Client::builder(TokioExecutor::new()).build(https));
-        let client = Client::new(service, config.default_namespace);
+        let client = Client::new(service, config.default_namespace, None);
         let pods: Api<Pod> = Api::default_namespaced(client);
         pods.list(&Default::default()).await?;
         Ok(())

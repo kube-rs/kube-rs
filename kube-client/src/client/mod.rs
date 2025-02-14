@@ -7,6 +7,7 @@
 //!
 //! The [`Client`] can also be used with [`Discovery`](crate::Discovery) to dynamically
 //! retrieve the resources served by the kubernetes API.
+use chrono::{DateTime, Utc};
 use either::{Either, Left, Right};
 use futures::{future::BoxFuture, AsyncBufRead, StreamExt, TryStream, TryStreamExt};
 use http::{self, Request, Response};
@@ -78,6 +79,7 @@ pub struct Client {
     // - `BoxFuture` for dynamic response future type
     inner: Buffer<Request<Body>, BoxFuture<'static, Result<Response<Body>, BoxError>>>,
     default_ns: String,
+    valid_until: Option<DateTime<Utc>>,
 }
 
 /// Constructors and low-level api interfaces.
@@ -115,7 +117,7 @@ impl Client {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn new<S, B, T>(service: S, default_namespace: T) -> Self
+    pub fn new<S, B, T>(service: S, default_namespace: T, valid_until: Option<DateTime<Utc>>) -> Self
     where
         S: Service<Request<Body>, Response = Response<B>> + Send + 'static,
         S::Future: Send + 'static,
@@ -131,6 +133,7 @@ impl Client {
         Self {
             inner: Buffer::new(BoxService::new(service), 1024),
             default_ns: default_namespace.into(),
+            valid_until,
         }
     }
 
@@ -162,6 +165,14 @@ impl Client {
     /// or uses the service account's namespace when deployed in-cluster.
     pub fn default_namespace(&self) -> &str {
         &self.default_ns
+    }
+
+    /// Get the time when the client will expire
+    ///
+    /// This will only be set if the client was created with client credentials that has an expiry time.
+    /// You may ignore this if you are using an authentication method that does not expire, or that can be refreshed automatically.
+    pub fn valid_until(&self) -> &Option<DateTime<Utc>> {
+        &self.valid_until
     }
 
     /// Perform a raw HTTP request against the API and return the raw response back.
@@ -504,7 +515,7 @@ mod tests {
     #[tokio::test]
     async fn test_default_ns() {
         let (mock_service, _) = mock::pair::<Request<Body>, Response<Body>>();
-        let client = Client::new(mock_service, "test-namespace");
+        let client = Client::new(mock_service, "test-namespace", None);
         assert_eq!(client.default_namespace(), "test-namespace");
     }
 
@@ -536,7 +547,7 @@ mod tests {
             );
         });
 
-        let pods: Api<Pod> = Api::default_namespaced(Client::new(mock_service, "default"));
+        let pods: Api<Pod> = Api::default_namespaced(Client::new(mock_service, "default", None));
         let pod = pods.get("test").await.unwrap();
         assert_eq!(pod.metadata.annotations.unwrap().get("kube-rs").unwrap(), "test");
         spawned.await.unwrap();

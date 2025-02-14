@@ -1,4 +1,5 @@
 use bytes::Bytes;
+use chrono::{DateTime, Utc};
 use http::{header::HeaderMap, Request, Response};
 use hyper::{
     body::Incoming,
@@ -30,6 +31,7 @@ pub type DynBody = dyn http_body::Body<Data = Bytes, Error = BoxError> + Send + 
 pub struct ClientBuilder<Svc> {
     service: Svc,
     default_ns: String,
+    valid_until: Option<DateTime<Utc>>,
 }
 
 impl<Svc> ClientBuilder<Svc> {
@@ -37,13 +39,14 @@ impl<Svc> ClientBuilder<Svc> {
     ///
     /// This method is only intended for advanced use cases, most users will want to use [`ClientBuilder::try_from`] instead,
     /// which provides a default stack as a starting point.
-    pub fn new(service: Svc, default_namespace: impl Into<String>) -> Self
+    pub fn new(service: Svc, default_namespace: impl Into<String>, valid_until: Option<DateTime<Utc>>) -> Self
     where
         Svc: Service<Request<Body>>,
     {
         Self {
             service,
             default_ns: default_namespace.into(),
+            valid_until,
         }
     }
 
@@ -52,10 +55,12 @@ impl<Svc> ClientBuilder<Svc> {
         let Self {
             service: stack,
             default_ns,
+            valid_until,
         } = self;
         ClientBuilder {
             service: layer.layer(stack),
             default_ns,
+            valid_until,
         }
     }
 
@@ -68,7 +73,7 @@ impl<Svc> ClientBuilder<Svc> {
         B: http_body::Body<Data = bytes::Bytes> + Send + 'static,
         B::Error: Into<BoxError>,
     {
-        Client::new(self.service, self.default_ns)
+        Client::new(self.service, self.default_ns, self.valid_until)
     }
 }
 
@@ -148,6 +153,9 @@ where
     let default_ns = config.default_namespace.clone();
     let auth_layer = config.auth_layer()?;
 
+    let (exec_identity, expiration) = config.exec_identity_pem();
+    let identity = exec_identity.or_else(|| config.identity_pem());
+
     let client: hyper_util::client::legacy::Client<_, Body> = {
         // Current TLS feature precedence when more than one are set:
         // 1. rustls-tls
@@ -155,9 +163,9 @@ where
         // Create a custom client to use something else.
         // If TLS features are not enabled, http connector will be used.
         #[cfg(feature = "rustls-tls")]
-        let connector = config.rustls_https_connector_with_connector(connector)?;
+        let connector = config.rustls_https_connector_with_connector(connector, identity)?;
         #[cfg(all(not(feature = "rustls-tls"), feature = "openssl-tls"))]
-        let connector = config.openssl_https_connector_with_connector(connector)?;
+        let connector = config.openssl_https_connector_with_connector(connector, identity)?;
         #[cfg(all(not(feature = "rustls-tls"), not(feature = "openssl-tls")))]
         if config.cluster_url.scheme() == Some(&http::uri::Scheme::HTTPS) {
             // no tls stack situation only works with http scheme
@@ -250,6 +258,7 @@ where
             .layer(service),
         ),
         default_ns,
+        expiration,
     ))
 }
 

@@ -256,7 +256,7 @@ mod test {
     #[tokio::test]
     async fn scopes_should_allow_correct_interface() {
         let (mock_service, _handle) = mock::pair::<Request<Body>, Response<Body>>();
-        let client = Client::new(mock_service, "default");
+        let client = Client::new(mock_service, "default", None);
 
         let _: Api<corev1::Node> = Api::all(client.clone());
         let _: Api<corev1::Pod> = Api::default_namespaced(client.clone());

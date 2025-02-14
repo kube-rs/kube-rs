@@ -18,7 +18,7 @@ jobs:
         uses: actions/checkout@v4
       - name: Install stable toolchain
         # tarpaulin is currently broken for Rust 1.83, see #1657
-        uses: dtolnay/rust-toolchain@1.82.0
+        uses: dtolnay/rust-toolchain@1.89.0
       - uses: Swatinem/rust-cache@v2
       - name: Install tarpaulin
         uses: taiki-e/install-action@v2
